@@ -1,0 +1,46 @@
+[0m[ INFO] [1793865269.407486712]: Lab 2.6 ready: dry_run=false, angle=45.0 deg, distance=5.00 m, v<=0.15, w<=0.25[0m
+[0m[ INFO] [1793865269.408347592]: WAIT: pose=0 cloud=0 stable=0 turn_obstacle=1 can_mode=-1[0m
+[0m[ INFO] [1793865271.408952965]: WAIT: pose=1 cloud=1 stable=17 turn_obstacle=1 can_mode=1[0m
+[0m[ INFO] [1793865273.428473059]: WAIT: pose=1 cloud=1 stable=38 turn_obstacle=1 can_mode=1[0m
+[0m[ INFO] [1793865275.448491811]: WAIT: pose=1 cloud=1 stable=58 turn_obstacle=1 can_mode=1[0m
+[0m[ INFO] [1793865277.468508668]: WAIT: pose=1 cloud=1 stable=5 turn_obstacle=0 can_mode=1[0m
+[0m[ INFO] [1793865278.909103518]: Origin -7.752 -1.379 yaw -2.913; target yaw -2.128[0m
+[0m[ INFO] [1793865278.909211616]: STATE TURNING [0m
+[0m[ INFO] [1793865279.808980144]: STATE FAULT Obstacle in motion corridor[0m
+[0m[ INFO] [1793865279.809106130]: RESULT FAULT: distance 0.046, along -0.046, cross 0.004; Obstacle in motion corridor[0m
+[31m================================================================================REQUIRED process [basicControl-1] has died!
+process has died [pid 24316, exit code 2, cmd /home/nvidia/lab26/catkin_ws/devel/lib/basic_control/basicControl __name:=basicControl __log:=/home/nvidia/.ros/log/f7081be4-d8e8-11f1-96b7-48b02d82d0ea/basicControl-1.log].
+log file: /home/nvidia/.ros/log/f7081be4-d8e8-11f1-96b7-48b02d82d0ea/basicControl-1*.log
+Initiating shutdown!
+================================================================================[0m
+... logging to /home/nvidia/.ros/log/f7081be4-d8e8-11f1-96b7-48b02d82d0ea/roslaunch-nvidia-desktop-24301.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/home/nvidia/lab26/catkin_ws/src/basic_control/launch/basicControl.launch
+[1mstarted roslaunch server http://127.0.0.1:36963/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /basicControl/csv: /home/nvidia/lab2...
+ * /basicControl/distance: 5.0
+ * /basicControl/dry_run: False
+ * /basicControl/run_timeout: 180
+ * /basicControl/speed: 0.15
+ * /basicControl/turn_degrees: 45.0
+ * /rosdistro: noetic
+ * /rosversion: 1.17.0
+
+NODES
+  /
+    basicControl (basic_control/basicControl)
+
+[1mROS_MASTER_URI=http://127.0.0.1:11311[0m
+]2;/home/nvidia/lab26/catkin_ws/src/basic_control/launch/basicControl.launch http://127.0.0.1:11311
+[1mprocess[basicControl-1]: started with pid [24316][0m
+[basicControl-1] killing on exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+[1mdone[0m

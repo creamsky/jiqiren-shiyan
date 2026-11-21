@@ -1,0 +1,28 @@
+# Frozen deliveries and original course materials
+/归档/
+/配套代码/
+/验收资料/
+/原始参考/
+
+# Field recordings and archived source packages
+/实验一/maps/*.pcd
+/实验一/maps/*.bag
+/实验一/*.zip
+
+# Local dependencies, build products, logs and VM state
+node_modules/
+__pycache__/
+*.pyc
+build/
+devel/
+logs/
+/实验三扩展/仿真/runtime/.cache/
+/实验三扩展/仿真/runtime/.private/
+
+# Local robot connection state and credentials
+robot-address.json
+.env
+.env.local
+robot_lab_ed25519
+*.ppk
+~$*

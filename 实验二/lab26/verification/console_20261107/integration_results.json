@@ -1,0 +1,37 @@
+[
+  {
+    "case": "complete",
+    "pass": true,
+    "exit_code": 0,
+    "distance": 5.001,
+    "max_cross": 0.0035
+  },
+  {
+    "case": "odometry_timeout",
+    "pass": true,
+    "exit_code": 2,
+    "distance": 0.0,
+    "max_cross": 0
+  },
+  {
+    "case": "lidar_timeout",
+    "pass": true,
+    "exit_code": 2,
+    "distance": 0.0,
+    "max_cross": 0
+  },
+  {
+    "case": "obstacle",
+    "pass": true,
+    "exit_code": 0,
+    "distance": 5.0005,
+    "max_cross": 0.0027
+  },
+  {
+    "case": "invalid_pose",
+    "pass": true,
+    "exit_code": 2,
+    "distance": 0.0,
+    "max_cross": 0
+  }
+]

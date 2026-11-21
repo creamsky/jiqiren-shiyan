@@ -1,0 +1,12 @@
+{
+  "rotation": {
+    "task": "rotate_only_45_deg",
+    "success": true,
+    "angle_deg": 45.05239705109664,
+    "final_yaw": -2.2067212442358537
+  },
+  "drive_result": "RESULT DONE: distance 5.002, along 5.002, cross -0.001; \u001b[0m",
+  "max_cross_track_m": 0.045151,
+  "max_command_speed_m_s": 0.15,
+  "samples": 397
+}

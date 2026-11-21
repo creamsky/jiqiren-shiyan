@@ -1,0 +1,192 @@
+Multi thread started 
+p_pre->lidar_type 2
+~~~~/home/nvidia/lab1/slam_experiment/FAST-LIO-Localization/FAST-LIO-Localization-QN-master/src/third_party/FAST_LIO/ file opened
+[33m[ WARN] [1793867127.037662342]: No point, skip this scan!
+[0m
+[0m[ INFO] [1793867127.035407118]: IMU Initial Done[0m
+state_point.pos(0): 0.0155025
+state_point.pos(1): 0.00279086
+state_point.pos(2): -0.0030659
+car_pose yaw: -0.00337202
+state_point.pos(0): 0.0148696
+state_point.pos(1): 0.00137915
+state_point.pos(2): -0.0017556
+car_pose yaw: -0.0159335
+state_point.pos(0): 0.0225637
+state_point.pos(1): 0.00218153
+state_point.pos(2): -0.00600314
+car_pose yaw: -0.00926646
+state_point.pos(0): 0.0261772
+state_point.pos(1): -0.00051704
+state_point.pos(2): -0.00200322
+car_pose yaw: -0.0093658
+state_point.pos(0): 0.0234732
+state_point.pos(1): 0.000858764
+state_point.pos(2): -0.00517015
+car_pose yaw: -0.00784038
+state_point.pos(0): 0.0278705
+state_point.pos(1): 0.00173304
+state_point.pos(2): -0.00236258
+car_pose yaw: -0.0120735
+state_point.pos(0): 0.0284348
+state_point.pos(1): 0.000275868
+state_point.pos(2): -0.0034952
+car_pose yaw: -0.0028003
+state_point.pos(0): 0.0296517
+state_point.pos(1): -0.00137877
+state_point.pos(2): -0.00569574
+car_pose yaw: -0.0101078
+state_point.pos(0): 0.0311231
+state_point.pos(1): -0.000740315
+state_point.pos(2): -0.00300958
+car_pose yaw: -0.00600911
+state_point.pos(0): 0.0335425
+state_point.pos(1): -0.00236213
+state_point.pos(2): -0.00319415
+car_pose yaw: 0.00760436
+state_point.pos(0): 0.0335927
+state_point.pos(1): 0.00117346
+state_point.pos(2): -0.0041571
+car_pose yaw: 0.000109969
+state_point.pos(0): 0.0321529
+state_point.pos(1): 0.000190144
+state_point.pos(2): -0.00304925
+car_pose yaw: -0.0108784
+state_point.pos(0): 0.0362476
+state_point.pos(1): 0.000906709
+state_point.pos(2): -0.00358827
+car_pose yaw: 0.000194612
+state_point.pos(0): 0.0362387
+state_point.pos(1): 0.00179484
+state_point.pos(2): -0.00259183
+car_pose yaw: -0.0106696
+state_point.pos(0): 0.033302
+state_point.pos(1): 0.00093969
+state_point.pos(2): -0.00369835
+car_pose yaw: -0.00120787
+state_point.pos(0): 0.0387028
+state_point.pos(1): 0.00136131
+state_point.pos(2): -0.0060582
+car_pose yaw: -0.0144833
+state_point.pos(0): 0.0336051
+state_point.pos(1): 0.00151202
+state_point.pos(2): -0.00406094
+car_pose yaw: -0.0110402
+state_point.pos(0): 0.0356212
+state_point.pos(1): 0.00233718
+state_point.pos(2): -0.00346293
+car_pose yaw: -0.00433415
+state_point.pos(0): 0.036948
+state_point.pos(1): 0.00175583
+state_point.pos(2): -0.00491158
+car_pose yaw: -0.00586361
+state_point.pos(0): 0.0361223
+state_point.pos(1): 0.00253048
+state_point.pos(2): -0.00386677
+car_pose yaw: -0.00601036
+state_point.pos(0): 0.0378337
+state_point.pos(1): 0.000208449
+state_point.pos(2): -0.00437502
+car_pose yaw: -0.0147047
+state_point.pos(0): 0.0391886
+state_point.pos(1): 0.00274633
+state_point.pos(2): -0.00517154
+car_pose yaw: -0.0187001
+state_point.pos(0): 0.0372387
+state_point.pos(1): 0.00342176
+state_point.pos(2): -0.00461032
+car_pose yaw: -0.0204018
+state_point.pos(0): 0.0393264
+state_point.pos(1): 0.00343613
+state_point.pos(2): -0.00305548
+car_pose yaw: -0.0231522
+state_point.pos(0): 0.0361231
+state_point.pos(1): 0.00274773
+state_point.pos(2): -0.00236387
+car_pose yaw: -0.0218518
+state_point.pos(0): 0.0395552
+state_point.pos(1): 0.00397449
+state_point.pos(2): -0.00321495
+car_pose yaw: -0.0215418
+state_point.pos(0): 0.0403026
+state_point.pos(1): 0.00408231
+state_point.pos(2): -0.00382462
+car_pose yaw: -0.014172
+state_point.pos(0): 0.0368687
+state_point.pos(1): 0.00303997
+state_point.pos(2): -0.00195499
+car_pose yaw: -0.0118309
+state_point.pos(0): 0.040213
+state_point.pos(1): 0.00274608
+state_point.pos(2): -0.0038178
+car_pose yaw: -0.0121948
+[33m[ WARN] [1793867159.453046846]: catch sig 2[0m
+save pcd
+[0m[ INFO] [1793867159.552767089]: Point cloud saved to /home/nvidia/lab1/maps/20261105_162515.pcd[0m
+Rebuild thread terminated normally
+[INFO] [1793867127.282235]: Recording keyframe map to /home/nvidia/lab1/maps/20261105_162515.bag; stop mapping with Ctrl+C.
+[INFO] [1793867127.346309]: Saved keyframe 1 (1197 points)
+[INFO] [1793867159.452966]: Map saved: /home/nvidia/lab1/maps/20261105_162515.bag (1 keyframes)
+... logging to /home/nvidia/.ros/log/71b77ef8-d8f2-11f1-ab68-48b02d82d0ea/roslaunch-nvidia-desktop-33636.log
+Checking log directory for disk usage. This may take a while.
+Press Ctrl-C to interrupt
+Done checking log file disk usage. Usage is <1GB.
+]2;/home/nvidia/lab1/slam_experiment/FAST-LIO-Localization/FAST-LIO-Localization-QN-master/src/fast_lio_localization_qn/launch/mapping_record.launch
+[1mstarted roslaunch server http://127.0.0.1:43349/[0m
+
+SUMMARY
+========
+
+PARAMETERS
+ * /common/imu_topic: /imu
+ * /common/lid_topic: /velodyne_points
+ * /common/time_offset_lidar_to_imu: 0.0
+ * /common/time_sync_en: False
+ * /cube_side_length: 1000.0
+ * /feature_extract_enable: False
+ * /filter_size_map: 0.5
+ * /filter_size_surf: 0.5
+ * /keyframe_map_recorder/keyframe_angle_deg: 15.0
+ * /keyframe_map_recorder/keyframe_distance: 1.5
+ * /keyframe_map_recorder/output_bag: /home/nvidia/lab1...
+ * /mapping/acc_cov: 0.1
+ * /mapping/b_acc_cov: 0.0001
+ * /mapping/b_gyr_cov: 0.0001
+ * /mapping/det_range: 100.0
+ * /mapping/extrinsic_R: [1, 0, 0, 0, 1, 0...
+ * /mapping/extrinsic_T: [0, 0, 0.28]
+ * /mapping/extrinsic_est_en: False
+ * /mapping/fov_degree: 180
+ * /mapping/gyr_cov: 0.1
+ * /max_iteration: 3
+ * /pcd_save/file_path: /home/nvidia/lab1...
+ * /pcd_save/interval: -1
+ * /pcd_save/pcd_save_en: True
+ * /point_filter_num: 4
+ * /preprocess/blind: 2
+ * /preprocess/lidar_type: 2
+ * /preprocess/scan_line: 16
+ * /preprocess/scan_rate: 10
+ * /preprocess/timestamp_unit: 0
+ * /publish/dense_publish_en: False
+ * /publish/path_en: True
+ * /publish/scan_bodyframe_pub_en: True
+ * /publish/scan_publish_en: True
+ * /rosdistro: noetic
+ * /rosversion: 1.17.0
+ * /runtime_pos_log_enable: False
+
+NODES
+  /
+    keyframe_map_recorder (fast_lio_localization_qn/record_keyframe_map.py)
+    laserMapping (fast_lio/fastlio_mapping)
+
+[1mROS_MASTER_URI=http://127.0.0.1:11311[0m
+]2;/home/nvidia/lab1/slam_experiment/FAST-LIO-Localization/FAST-LIO-Localization-QN-master/src/fast_lio_localization_qn/launch/mapping_record.launch http://127.0.0.1:11311
+[1mprocess[laserMapping-1]: started with pid [33707][0m
+[1mprocess[keyframe_map_recorder-2]: started with pid [33708][0m
+[keyframe_map_recorder-2] killing on exit
+[laserMapping-1] killing on exit
+shutting down processing monitor...
+... shutting down processing monitor complete
+[1mdone[0m

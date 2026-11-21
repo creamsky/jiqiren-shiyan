@@ -1,0 +1,161 @@
+{
+  "observedAt": "2026-11-18T16:53:29.685Z",
+  "openingActions": [],
+  "layouts": [
+    {
+      "viewport": [
+        1440,
+        1000
+      ],
+      "native": [
+        1414,
+        974
+      ],
+      "canvas": {
+        "source": [
+          1280,
+          800
+        ],
+        "display": [
+          1558,
+          974
+        ]
+      },
+      "theme": "dark",
+      "colors": {
+        "h1": "rgb(16, 22, 25)",
+        "#note": "rgb(16, 22, 25)",
+        "#v": "rgb(16, 22, 25)",
+        "#go": "rgb(16, 22, 25)",
+        "#manual": "rgb(16, 22, 25)",
+        ".scene-legend": "rgb(16, 22, 25)",
+        "#engine": "rgb(16, 22, 25)"
+      },
+      "disabledOpacity": "1",
+      "panel": "rgba(0, 0, 0, 0) linear-gradient(140deg, rgba(255, 255, 255, 0.933), rgba(237, 244, 244, 0.92) 55%, rgba(247, 251, 251, 0.93)) repeat scroll 0% 0% / auto padding-box border-box",
+      "panelBounds": [
+        400,
+        948
+      ],
+      "note": "已复位至起点 · 当前布置待同步"
+    },
+    {
+      "viewport": [
+        1440,
+        1000
+      ],
+      "native": [
+        1414,
+        974
+      ],
+      "canvas": {
+        "source": [
+          1280,
+          800
+        ],
+        "display": [
+          1558,
+          974
+        ]
+      },
+      "theme": "light",
+      "colors": {
+        "h1": "rgb(16, 22, 25)",
+        "#note": "rgb(16, 22, 25)",
+        "#v": "rgb(16, 22, 25)",
+        "#go": "rgb(16, 22, 25)",
+        "#manual": "rgb(16, 22, 25)",
+        ".scene-legend": "rgb(16, 22, 25)",
+        "#engine": "rgb(16, 22, 25)"
+      },
+      "disabledOpacity": "1",
+      "panel": "rgba(0, 0, 0, 0) linear-gradient(140deg, rgba(255, 255, 255, 0.933), rgba(237, 244, 244, 0.92) 55%, rgba(247, 251, 251, 0.93)) repeat scroll 0% 0% / auto padding-box border-box",
+      "panelBounds": [
+        400,
+        948
+      ],
+      "note": "已复位至起点 · 当前布置待同步"
+    },
+    {
+      "viewport": [
+        900,
+        900
+      ],
+      "native": [
+        874,
+        874
+      ],
+      "canvas": {
+        "source": [
+          1280,
+          800
+        ],
+        "display": [
+          1398,
+          874
+        ]
+      },
+      "theme": "light",
+      "colors": {
+        "h1": "rgb(16, 22, 25)",
+        "#note": "rgb(16, 22, 25)",
+        "#v": "rgb(16, 22, 25)",
+        "#go": "rgb(16, 22, 25)",
+        "#manual": "rgb(16, 22, 25)",
+        ".scene-legend": "rgb(16, 22, 25)",
+        "#engine": "rgb(16, 22, 25)"
+      },
+      "disabledOpacity": "1",
+      "panel": "rgba(0, 0, 0, 0) linear-gradient(140deg, rgba(255, 255, 255, 0.933), rgba(237, 244, 244, 0.92) 55%, rgba(247, 251, 251, 0.93)) repeat scroll 0% 0% / auto padding-box border-box",
+      "panelBounds": [
+        356,
+        856
+      ],
+      "note": "已复位至起点 · 当前布置待同步"
+    },
+    {
+      "viewport": [
+        500,
+        900
+      ],
+      "native": [
+        465,
+        592
+      ],
+      "canvas": {
+        "source": [
+          1280,
+          800
+        ],
+        "display": [
+          947,
+          592
+        ]
+      },
+      "theme": "light",
+      "colors": {
+        "h1": "rgb(16, 22, 25)",
+        "#note": "rgb(16, 22, 25)",
+        "#v": "rgb(16, 22, 25)",
+        "#go": "rgb(16, 22, 25)",
+        "#manual": "rgb(16, 22, 25)",
+        ".scene-legend": "rgb(16, 22, 25)",
+        "#engine": "rgb(16, 22, 25)"
+      },
+      "disabledOpacity": "1",
+      "panel": "rgba(0, 0, 0, 0) linear-gradient(140deg, rgba(255, 255, 255, 0.933), rgba(237, 244, 244, 0.92) 55%, rgba(247, 251, 251, 0.93)) repeat scroll 0% 0% / auto padding-box border-box",
+      "panelBounds": [
+        467,
+        891.25
+      ],
+      "note": "已复位至起点 · 当前布置待同步"
+    }
+  ],
+  "actions": [
+    {
+      "url": "http://127.0.0.1:8765/api/simulation/start",
+      "body": "{}"
+    }
+  ],
+  "errors": []
+}

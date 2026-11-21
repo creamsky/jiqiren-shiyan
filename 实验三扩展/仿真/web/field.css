@@ -1,0 +1,52 @@
+#nativeViewport,#mapViewport{position:absolute;inset:0;overflow:hidden;background:transparent}
+#nativeViewport[hidden],#mapViewport[hidden]{display:none!important}
+.standalone-gazebo{margin:0;overflow:hidden;background:#dce2e3;color:#101619;font:14px system-ui,sans-serif}
+.standalone-gazebo #nativeViewport{position:fixed;inset:0;border:0;border-radius:0}
+.native-bar{position:fixed;z-index:3;right:12px;bottom:12px;display:flex;align-items:center;gap:8px}
+.standalone-gazebo button,.standalone-gazebo #nativeStatus,.standalone-gazebo #nativeRecovery{background:#fffffff2;color:#101619;border:1px solid #b6c0c4;border-radius:9px;padding:7px 12px}
+.standalone-gazebo #nativeStatus:empty{display:none}.standalone-gazebo a{color:#101619}
+body[data-simulation-view="map"] #nativeStatus,body[data-simulation-view="map"] #fullNative,body[data-simulation-view="map"] #nativeRecovery{display:none!important}
+body[data-simulation-view="native"] #fitMap{display:none!important}
+.native-open{display:inline-flex;align-items:center;padding:9px 12px;border-radius:12px;text-decoration:none;background:#cee5e7;border:1px solid #557c875c;font-weight:600;white-space:nowrap}
+body.simulation-console .view-dock{max-width:100%;flex-wrap:wrap}
+@media(max-width:800px){body.simulation-console .native-open{padding:8px 10px;font-size:11px}body.simulation-console .scene-bottom{gap:5px}}
+#nativeRecovery{position:absolute;z-index:3;left:clamp(20px,20vw,360px);top:42%;max-width:min(360px,85vw);padding:16px 20px;color:var(--text);border-radius:16px}
+#nativeRecovery[hidden],#nativeViewport[hidden]~#nativeRecovery{display:none!important}
+#nativeRecovery>div{display:flex;align-items:center;gap:14px;margin-top:10px}
+#nativeRecovery a{text-decoration:none}
+#nativeViewport:fullscreen{inset:0;width:100%;height:100%;border:0;border-radius:0;background:#20262b}
+#nativeViewport .native-rfb-frame{position:absolute;overflow:hidden}
+#mapCanvas{display:block;width:100%;height:100%}
+#mapCanvas{touch-action:none;cursor:crosshair}
+#nativeStatus{font-size:10px;color:var(--muted);max-width:200px}
+.sim-tools{display:flex;flex-wrap:wrap;gap:5px;margin:15px 0 8px}.sim-tools .active{box-shadow:inset 0 0 0 1px var(--cyan);color:var(--cyan)}
+#preset{font:inherit;color:var(--text);background:transparent;border:0;cursor:pointer}#preset option{background:var(--bg)}
+.scene-caption,.scene-legend{pointer-events:none}#engine.live{color:var(--cyan)}
+.scene-telemetry{left:32px;bottom:176px;width:calc(100% - 500px);max-width:640px;pointer-events:none;opacity:.87}
+@media(min-width:1650px){.scene-telemetry{width:calc(100% - 520px)}}
+@media(min-width:801px) and (max-width:1200px){.scene-telemetry{left:24px;width:calc(100% - 438px)}}
+@media(max-width:800px){.scene-telemetry{display:none}}
+
+/* Gazebo carries a bright native desktop. Keep the original glass geometry and
+   give every overlay a light backing so black labels stay readable in both themes. */
+body.simulation-console{background:#e5edef!important;color:#101619!important}
+body.simulation-console .workspace,body.simulation-console .workspace *{color:#101619!important;text-shadow:none!important}
+body.simulation-console .scene{background:#e5edef!important}
+body.simulation-console .glass{background:linear-gradient(140deg,#ffffffeb,#eef5f5e6 55%,#ffffffeb)!important;border-color:#ffffffed!important;box-shadow:inset 0 1px 2px #fff,inset 1px 0 2px #fff9,0 12px 32px #30454f29!important}
+body.simulation-console .inspector.glass{background:linear-gradient(140deg,#ffffffee,#edf4f4eb 55%,#f7fbfbed)!important}
+body.simulation-console .scene-caption{background:linear-gradient(135deg,#fffffff0,#edf5f5eb);border:1px solid #ffffffed;border-radius:18px;padding:11px 15px;box-shadow:0 4px 14px #32485013}
+body.simulation-console .scene-caption h1{margin-top:5px}
+body.simulation-console .scene-legend{background:#f7fbfbeb;border:1px solid #fff;border-radius:12px;padding:8px 12px}
+body.simulation-console .scene-readout{background:#f7fbfbeb;border:1px solid #fff;border-radius:9px;padding:6px 10px}
+body.simulation-console .scene-telemetry{opacity:1;background:#f6fafaf0!important}
+body.simulation-console button:disabled,body.simulation-console input:disabled{opacity:1!important;color:#3b4145!important;cursor:not-allowed;background:#e6edefd9!important}
+body.simulation-console button,body.simulation-console input,body.simulation-console select{color:#101619!important}
+body.simulation-console .secondary,body.simulation-console .experiment-picker,body.simulation-console .dpad button,body.simulation-console .number-control{background:#ffffffa6!important;border-color:#8ba0a65c!important}
+body.simulation-console .primary{background:linear-gradient(135deg,#c5e4e8,#e5f2f3)!important;border:1px solid #718e9899!important}
+body.simulation-console .sim-tools .active,body.simulation-console .dpad button.active{background:#c3e2e5!important;border-color:#4c747d!important}
+body.simulation-console .connection-panel,body.simulation-console .stop-panel{background:#f7fbfbb0!important;border-color:#8aa0aa40!important}
+body.simulation-console .stop{background:#f7e4dd!important;border:1px solid #be8e7d!important}
+body.simulation-console .badge,body.simulation-console .tag{background:#e9f1f0!important;border-color:#a4b9ba!important}
+body.simulation-console .control-targets a.active{background:#d3e8e9!important}
+body.simulation-console #preset option{background:#f4f8f8!important}
+@media(max-width:800px){body.simulation-console .scene-caption{padding:9px 11px;max-width:53%}body.simulation-console .scene-caption h1{font-size:20px}body.simulation-console .scene-caption .eyebrow{font-size:8px}body.simulation-console #nativeStatus{display:none}.scene-top{gap:6px!important}body.simulation-console .scene-tools{padding:4px;gap:2px}body.simulation-console .control-targets a{padding:7px 6px;font-size:10px}}

@@ -1,0 +1,92 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Global Options:
+    Background Color: 25; 29; 38
+    Fixed Frame: camera_init
+    Frame Rate: 20
+  Displays:
+    - Class: rviz/Grid
+      Name: Grid 1 metre
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 40
+      Color: 85; 90; 100
+      Reference Frame: <Fixed Frame>
+    - Class: rviz/PointCloud2
+      Name: Live lidar cloud
+      Enabled: true
+      Topic: /cloud_registered
+      Queue Size: 2
+      Size (Pixels): 2
+      Style: Points
+      Color Transformer: AxisColor
+      Position Transformer: XYZ
+      Axis: Z
+      Autocompute Value Bounds:
+        Value: false
+        Min Value: -1
+        Max Value: 3
+      Decay Time: 0.3
+      Alpha: 1
+    - Class: rviz/PointCloud2
+      Name: Accumulated map 30 seconds
+      Enabled: true
+      Topic: /cloud_registered
+      Queue Size: 2
+      Size (Pixels): 1
+      Style: Points
+      Color Transformer: AxisColor
+      Position Transformer: XYZ
+      Axis: Z
+      Decay Time: 30
+      Alpha: 0.3
+    - Class: rviz/Path
+      Name: Actual trajectory
+      Enabled: true
+      Topic: /path
+      Color: 40; 230; 255
+      Line Style: Lines
+      Line Width: 0.04
+      Alpha: 1
+      Buffer Length: 1
+    - Class: rviz/Odometry
+      Name: Robot pose
+      Enabled: true
+      Topic: /Odometry
+      Keep: 1
+      Shape:
+        Value: Arrow
+        Color: 255; 100; 30
+        Alpha: 1
+        Shaft Length: 0.5
+        Shaft Radius: 0.05
+        Head Length: 0.2
+        Head Radius: 0.1
+    - Class: rviz/MarkerArray
+      Name: Experiment status and target
+      Enabled: true
+      Marker Topic: /lab26/markers
+      Queue Size: 2
+  Tools:
+    - Class: rviz/Interact
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+  Views:
+    Current:
+      Class: rviz/Orbit
+      Distance: 12
+      Pitch: 0.9
+      Yaw: 1.0
+      Target Frame: body
+      Focal Point:
+        X: 0
+        Y: 0
+        Z: 0
+Window Geometry:
+  Width: 1820
+  Height: 970
+  X: 65
+  Y: 30

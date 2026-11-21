@@ -1,0 +1,8 @@
+<package format="2">
+  <name>lab3_dwa</name><version>0.1.0</version>
+  <description>Supervised XY navigation using ROS navigation DWA.</description>
+  <maintainer email="lab@localhost">Robot lab</maintainer><license>BSD</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <exec_depend>rospy</exec_depend><exec_depend>move_base</exec_depend>
+  <exec_depend>dwa_local_planner</exec_depend><exec_depend>navfn</exec_depend>
+</package>

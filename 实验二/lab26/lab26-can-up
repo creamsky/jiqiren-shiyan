@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -e
+if /sbin/ip -details link show can0 | /bin/grep -q 'bitrate 500000' && /sbin/ip link show can0 | /bin/grep -q 'LOWER_UP'; then
+  exit 0
+fi
+/sbin/ip link set can0 down
+/sbin/ip link set can0 type can bitrate 500000
+/sbin/ip link set can0 up

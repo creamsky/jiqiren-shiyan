@@ -1,0 +1,4 @@
+<launch>
+  <include file="$(env LAB1_SOURCE)/RS_SDK/src/rslidar_sdk/launch/start.launch"/>
+  <include file="$(env LAB1_SOURCE)/FAST-LIO-Localization/imu_drive/src/fdilink_ahrs/launch/ahrs_data.launch"/>
+</launch>

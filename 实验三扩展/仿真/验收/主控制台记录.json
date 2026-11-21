@@ -1,0 +1,124 @@
+{
+  "observedAt": "2026-11-18T17:01:16.408Z",
+  "state": {
+    "phase": "running",
+    "objects": [
+      [
+        "block",
+        1.6,
+        -0.21
+      ],
+      [
+        "block",
+        4.39,
+        -1.01
+      ],
+      [
+        "cone",
+        2.73,
+        -1.88
+      ],
+      [
+        "cone",
+        0.53,
+        -2.58
+      ],
+      [
+        "block",
+        1.05,
+        -1.46
+      ],
+      [
+        "block",
+        1.22,
+        2.39
+      ],
+      [
+        "cone",
+        2.65,
+        1.75
+      ]
+    ],
+    "pose": [
+      2.213654986126549,
+      0.9480828183861446,
+      -0.16451418355090086
+    ],
+    "pointCount": 849,
+    "goal": [
+      7.69,
+      -0.03
+    ],
+    "speed": [
+      0.10471997784915833,
+      -0.006741269937389495
+    ]
+  },
+  "view": {
+    "mode": "map",
+    "nativeCanvas": false,
+    "count": "7",
+    "localScene": {
+      "objects": [
+        [
+          "block",
+          1.6,
+          -0.21
+        ],
+        [
+          "block",
+          4.39,
+          -1.01
+        ],
+        [
+          "cone",
+          2.73,
+          -1.88
+        ],
+        [
+          "cone",
+          0.53,
+          -2.58
+        ],
+        [
+          "block",
+          1.05,
+          -1.46
+        ],
+        [
+          "block",
+          1.22,
+          2.39
+        ],
+        [
+          "cone",
+          2.65,
+          1.75
+        ]
+      ],
+      "goal": [
+        7.69,
+        -0.03
+      ],
+      "sceneEdited": false,
+      "goalEdited": false
+    },
+    "engine": "本地仿真 · 在线",
+    "note": "跟踪局部轨迹",
+    "titleColor": "rgb(16, 22, 25)"
+  },
+  "actions": [
+    {
+      "url": "http://127.0.0.1:8765/api/simulation/start",
+      "body": "{}"
+    }
+  ],
+  "nativeRequests": [],
+  "errors": [],
+  "independentWindow": {
+    "url": "http://127.0.0.1:8765/simulation/gazebo/",
+    "title": "SCOUT MINI · Gazebo 原生窗口",
+    "userGesture": true,
+    "originalPageRemainedOpen": true
+  }
+}

@@ -1,0 +1,11 @@
+Eight R=0.5 outer=0 stage=DONE walked=6.16989 error=0.0352003 fault=
+Eight R=0.5 outer=1 stage=DONE walked=6.15069 error=0.0354156 fault=
+Eight R=1 outer=0 stage=DONE walked=12.4384 error=0.0569284 fault=
+Eight R=1 outer=1 stage=DONE walked=12.406 error=0.0571571 fault=
+Eight R=2 outer=0 stage=DONE walked=25.0314 error=0.0323283 fault=
+Eight R=2 outer=1 stage=DONE walked=25.024 error=0.0322629 fault=
+Eight R=5 outer=0 stage=DONE walked=62.736 error=0.0208909 fault=
+Eight R=5 outer=1 stage=DONE walked=62.7348 error=0.0208909 fault=
+Eight R=10 outer=0 stage=DONE walked=125.567 error=0.0199806 fault=
+Eight R=10 outer=1 stage=DONE walked=125.566 error=0.0200404 fault=
+PASS: wrap, turn-first, settle, endpoint stop, latched stop, fault stop, full integration. Distance=5.0005 max_cross=0.00834927

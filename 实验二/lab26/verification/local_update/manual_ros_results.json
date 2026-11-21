@@ -1,0 +1,70 @@
+[
+  {
+    "case": "initial_paused_zero",
+    "pass": true
+  },
+  {
+    "case": "bounded_pointcloud_preview",
+    "pass": true
+  },
+  {
+    "case": "manual_acceleration_ramp",
+    "pass": true
+  },
+  {
+    "case": "manual_w_and_release",
+    "pass": true
+  },
+  {
+    "case": "manual_s_a_d_and_limits",
+    "pass": true
+  },
+  {
+    "case": "rear_pause_disabled",
+    "pass": true
+  },
+  {
+    "case": "manual_translation_rotation_are_exclusive",
+    "pass": true
+  },
+  {
+    "case": "heartbeat_timeout_latches_pause",
+    "pass": true
+  },
+  {
+    "case": "manual_rejection_ack_and_fault_retained",
+    "pass": true
+  },
+  {
+    "case": "invalid_manual_pose_fault",
+    "pass": true
+  },
+  {
+    "case": "obstacle_pauses_without_fault",
+    "pass": true
+  },
+  {
+    "case": "hysteresis_band_holds_pause",
+    "pass": true
+  },
+  {
+    "case": "clear_two_seconds_resumes_original_task",
+    "pass": true
+  },
+  {
+    "case": "operator_stop_latches",
+    "pass": true
+  },
+  {
+    "case": "eight_invalid_radius_cannot_start",
+    "pass": true
+  },
+  {
+    "case": "eight_cross_start_progress_pause_resume_stop",
+    "pass": true
+  },
+  {
+    "case": "eight_outer_start_progress_pause_resume_stop",
+    "pass": true
+  }
+]

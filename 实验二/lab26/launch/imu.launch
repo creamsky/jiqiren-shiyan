@@ -1,0 +1,18 @@
+<launch>
+  <!-- Stable identity survives ttyUSB numbering changes. A crash may restart
+       the sensor, but the motion controller's fault remains latched. -->
+  <node pkg="fdilink_ahrs" name="ahrs_driver" type="ahrs_driver" output="screen" respawn="true" respawn_delay="2">
+    <param name="debug" value="false"/>
+    <param name="port" value="/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"/>
+    <param name="baud" value="921600"/>
+    <param name="imu_topic" value="imu"/>
+    <param name="imu_frame" value="imu_link"/>
+    <param name="mag_pose_2d_topic" value="/mag_pose_2d"/>
+    <param name="Euler_angles_pub_" value="/euler_angles"/>
+    <param name="Magnetic_pub_" value="/magnetic"/>
+    <param name="gps_topic_" value="/gps/fix"/>
+    <param name="twist_topic_" value="/system_speed"/>
+    <param name="NED_odom_topic_" value="/NED_odometry"/>
+    <param name="device_type" value="1"/>
+  </node>
+</launch>

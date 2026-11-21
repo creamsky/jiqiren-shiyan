@@ -1,0 +1,11 @@
+# A ray passing above a low object clears only the heights it traversed.
+plugins:
+  - {name: obstacles, type: "costmap_2d::VoxelLayer"}
+  - {name: inflation, type: "costmap_2d::InflationLayer"}
+obstacles:
+  origin_z: 0.0
+  z_resolution: 0.10
+  z_voxels: 16
+  max_obstacle_height: 1.5
+  mark_threshold: 0
+  unknown_threshold: 15

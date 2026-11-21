@@ -1,0 +1,20 @@
+<launch>
+  <!-- laser_odometry publishes the ground-reference static TF from expanded tire geometry. -->
+  <node pkg="pointcloud_to_laserscan" type="pointcloud_to_laserscan_node" name="laser_projection" output="screen">
+    <remap from="cloud_in" to="/velodyne_points"/><remap from="scan" to="/scout_lab/scan"/>
+    <param name="target_frame" value="base_footprint"/>
+    <param name="transform_tolerance" value="0.08"/>
+    <param name="min_height" value="0.10"/><param name="max_height" value="0.65"/>
+    <param name="angle_min" value="-3.14159265"/><param name="angle_max" value="3.14159265"/>
+    <param name="angle_increment" value="0.008726646"/>
+    <param name="scan_time" value="0.1"/>
+    <param name="range_min" value="0.30"/><param name="range_max" value="8.8"/>
+    <param name="use_inf" value="true"/><param name="concurrency_level" value="1"/>
+  </node>
+  <node pkg="cartographer_ros" type="cartographer_node" name="cartographer" output="screen" required="true" args="-configuration_directory $(find scout_lab)/config -configuration_basename laser_only.lua">
+    <remap from="scan" to="/scout_lab/scan"/><remap from="tracked_pose" to="/scout_lab/laser_pose"/>
+  </node>
+  <node pkg="scout_lab" type="laser_odometry.py" name="laser_odometry" required="true" output="screen">
+    <param name="configuration_directory" value="$(find scout_lab)/config"/>
+  </node>
+</launch>

@@ -1,0 +1,29 @@
+{
+  "service": "robot-lab-console",
+  "connected": true,
+  "status": {
+    "stage": "WAITING",
+    "mode": "manual",
+    "paused": true,
+    "obstacle": false,
+    "progress": 0,
+    "v": 0,
+    "w": 0,
+    "chassis_mode": 1,
+    "feedback_v": 0,
+    "feedback_w": 0,
+    "reason": "",
+    "total_distance": 5,
+    "sensors_ready": true,
+    "feedback_fresh": true,
+    "manual_ready": true,
+    "manual_block_reason": "",
+    "remote_switch": 2,
+    "chassis_errors": 0,
+    "manual_block_message": ""
+  },
+  "age": 68,
+  "owned": true,
+  "task": null,
+  "preparedExperiment": null
+}

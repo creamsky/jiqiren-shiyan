@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.0.2)
+project(scout_lab)
+find_package(catkin REQUIRED)
+catkin_package()
+catkin_install_python(PROGRAMS scripts/lab.py scripts/robot_description.py scripts/source_limits.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(FILES scripts/collision_geometry.py scripts/voxel_memory.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
+install(DIRECTORY launch urdf worlds config DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})
+install(FILES scripts/voxel_memory.py DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})

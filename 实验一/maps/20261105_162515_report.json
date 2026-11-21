@@ -1,0 +1,36 @@
+{
+  "stamp": "20261105_162515",
+  "phase": "COMPLETED; LIVE LOCALIZATION AND RVIZ REMAIN RUNNING",
+  "processes": {
+    "drivers": 33560,
+    "mapping": 33636,
+    "rviz": 33766,
+    "localization": 33765
+  },
+  "success": true,
+  "map": {
+    "bag": "/home/nvidia/lab1/maps/20261105_162515.bag",
+    "pcd": "/home/nvidia/lab1/maps/20261105_162515.pcd",
+    "points": 1505911,
+    "keyframes": 1,
+    "pcd_bytes": 48189405,
+    "bag_bytes": 31755
+  },
+  "localization": {
+    "frame": "map",
+    "position": [
+      -0.0050922664352933845,
+      -0.00425011728699585,
+      -0.0003899419153437985
+    ],
+    "messages": 15,
+    "age_seconds": 0.148319959,
+    "accepted": true
+  },
+  "rates_hz": {
+    "/imu": 99.83,
+    "/velodyne_points": 9.99,
+    "/Odometry": 9.09,
+    "/pose_stamped": 10.64
+  }
+}

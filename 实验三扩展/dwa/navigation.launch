@@ -1,0 +1,28 @@
+<launch>
+  <group ns="lab3_dwa">
+    <node pkg="move_base" type="move_base" name="move_base" output="log" required="true">
+      <rosparam command="load" file="$(find lab3_dwa)/navigation.yaml"/>
+      <!-- Default dwa_early profile from scout_lab/launch/field.launch. -->
+      <param name="DWAPlannerROS/sim_time" value="3.0"/>
+      <param name="DWAPlannerROS/path_distance_bias" value="13.0"/>
+      <param name="DWAPlannerROS/occdist_scale" value="0.13"/>
+      <!-- First sample window from rest: 0.04 m/s and 0.12 rad/s.
+           Filter ineffective creep before scoring. The chassis ramps at 50 Hz. -->
+      <param name="controller_frequency" value="5.0"/>
+      <param name="DWAPlannerROS/min_vel_trans" value="0.035"/>
+      <param name="DWAPlannerROS/min_vel_theta" value="0.05"/>
+      <param name="oscillation_timeout" value="15.0"/>
+      <param name="global_costmap/footprint_padding" value="0.04"/>
+      <param name="local_costmap/footprint_padding" value="0.04"/>
+      <param name="global_costmap/obstacles/observation_sources" value="lidar free_rays"/>
+      <param name="local_costmap/obstacles/observation_sources" value="lidar free_rays"/>
+      <param name="global_costmap/obstacles/lidar/clearing" value="false"/>
+      <param name="local_costmap/obstacles/lidar/clearing" value="false"/>
+      <rosparam param="global_costmap/obstacles/free_rays">{topic: /lab26/clearing_rays, data_type: PointCloud2, sensor_frame: body, marking: false, clearing: true, raytrace_range: 6.0, observation_persistence: 0.0}</rosparam>
+      <rosparam param="local_costmap/obstacles/free_rays">{topic: /lab26/clearing_rays, data_type: PointCloud2, sensor_frame: body, marking: false, clearing: true, raytrace_range: 4.0, observation_persistence: 0.0}</rosparam>
+      <remap from="cmd_vel" to="/lab3_dwa/raw_cmd"/>
+      <remap from="odom" to="/lab26/chassis_odom"/>
+    </node>
+    <node pkg="lab3_dwa" type="bridge.py" name="bridge" output="screen" required="true"/>
+  </group>
+</launch>

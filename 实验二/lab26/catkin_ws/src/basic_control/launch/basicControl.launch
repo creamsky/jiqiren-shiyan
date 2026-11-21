@@ -1,0 +1,39 @@
+<launch>
+  <arg name="dry_run" default="true"/>
+  <arg name="distance" default="5.0"/>
+  <arg name="speed" default="0.50"/>
+  <arg name="console" default="false"/>
+  <arg name="manual_speed" default="1.50"/>
+  <arg name="manual_angular_speed" default="0.50"/>
+  <arg name="rear_obstacle_pause" default="false"/>
+  <arg name="node_name" default="basicControl"/>
+  <arg name="max_angular_speed" default="0.30"/>
+  <arg name="linear_acceleration" default="0.20"/>
+  <arg name="manual_linear_acceleration" default="0.60"/>
+  <arg name="angular_acceleration" default="0.60"/>
+  <arg name="heading_kp" default="0.8"/>
+  <arg name="heading_kd" default="0.08"/>
+  <arg name="derivative_filter" default="0.15"/>
+  <arg name="turn_degrees" default="45.0"/>
+  <arg name="run_timeout" default="180.0"/>
+  <arg name="csv" default="$(env LAB26_ROOT)/logs/control.csv"/>
+  <node pkg="basic_control" type="basicControl" name="$(arg node_name)" output="screen" required="true">
+    <param name="dry_run" value="$(arg dry_run)"/>
+    <param name="distance" value="$(arg distance)"/>
+    <param name="speed" value="$(arg speed)"/>
+    <param name="console" value="$(arg console)"/>
+    <param name="manual_speed" value="$(arg manual_speed)"/>
+    <param name="manual_angular_speed" value="$(arg manual_angular_speed)"/>
+    <param name="rear_obstacle_pause" value="$(arg rear_obstacle_pause)"/>
+    <param name="max_angular_speed" value="$(arg max_angular_speed)"/>
+    <param name="linear_acceleration" value="$(arg linear_acceleration)"/>
+    <param name="manual_linear_acceleration" value="$(arg manual_linear_acceleration)"/>
+    <param name="angular_acceleration" value="$(arg angular_acceleration)"/>
+    <param name="heading_kp" value="$(arg heading_kp)"/>
+    <param name="heading_kd" value="$(arg heading_kd)"/>
+    <param name="derivative_filter" value="$(arg derivative_filter)"/>
+    <param name="turn_degrees" value="$(arg turn_degrees)"/>
+    <param name="run_timeout" value="$(arg run_timeout)"/>
+    <param name="csv" value="$(arg csv)"/>
+  </node>
+</launch>

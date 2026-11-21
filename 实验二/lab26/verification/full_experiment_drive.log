@@ -1,0 +1,8 @@
+[0m[ INFO] [1793864589.257234351]: Lab 2.6 ready: dry_run=false, angle=0.0 deg, distance=5.00 m, v<=0.15, w<=0.25[0m
+[0m[ INFO] [1793864589.258073442]: WAIT: pose=0 cloud=0 stable=0 turn_obstacle=1 can_mode=-1[0m
+[0m[ INFO] [1793864591.258461563]: WAIT: pose=1 cloud=1 stable=18 turn_obstacle=0 can_mode=1[0m
+[0m[ INFO] [1793864591.438273173]: Origin -8.842 -1.484 yaw -2.208; target yaw -2.208[0m
+[0m[ INFO] [1793864591.438409688]: STATE TURNING [0m
+[0m[ INFO] [1793864591.978506197]: STATE DRIVING [0m
+[0m[ INFO] [1793864629.018245736]: STATE DONE [0m
+[0m[ INFO] [1793864629.018342986]: RESULT DONE: distance 5.002, along 5.002, cross -0.001; [0m

@@ -1,0 +1,11 @@
+<robot xmlns:xacro="http://ros.org/wiki/xacro">
+  <xacro:arg name="roof_z" default="0.175"/>
+  <xacro:property name="roof_z" value="$(arg roof_z)"/>
+  <link name="computer"><visual><geometry><box size="0.27 0.21 0.04"/></geometry><material name="graphite"><color rgba=".16 .19 .20 1"/></material></visual><collision><geometry><box size="0.27 0.21 0.04"/></geometry></collision><inertial><mass value="2"/><inertia ixx=".0082" ixy="0" ixz="0" iyy=".013" iyz="0" izz=".0195"/></inertial></link>
+  <joint name="computer_mount" type="fixed"><parent link="base_link"/><child link="computer"/><origin xyz="0 0 .116"/></joint>
+  <link name="mast"><visual><geometry><cylinder radius=".018" length="${roof_z-.136}"/></geometry></visual><collision><geometry><cylinder radius=".018" length="${roof_z-.136}"/></geometry></collision><inertial><mass value=".3"/><inertia ixx=".003" ixy="0" ixz="0" iyy=".003" iyz="0" izz=".00005"/></inertial></link>
+  <joint name="mast_mount" type="fixed"><parent link="base_link"/><child link="mast"/><origin xyz="0 0 ${(.136+roof_z)/2}"/></joint>
+  <xacro:include filename="$(find velodyne_description)/urdf/VLP-16.urdf.xacro"/>
+  <xacro:VLP-16 parent="base_link" name="velodyne" topic="/velodyne_points" hz="10" lasers="16" samples="720" min_range="0.3" max_range="9.0" gpu="false"><origin xyz="0 0 ${roof_z}" rpy="0 0 0"/></xacro:VLP-16>
+</robot>
+

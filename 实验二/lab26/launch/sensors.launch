@@ -1,0 +1,22 @@
+<launch>
+  <arg name="root" default="$(env LAB26_ROOT)"/>
+  <arg name="original" default="$(env LAB26_ORIGINAL)"/>
+  <node pkg="rslidar_sdk" name="rslidar_sdk_node" type="rslidar_sdk_node" output="log" required="true">
+    <param name="config_path" value="$(arg original)/RS_SDK/src/rslidar_sdk/config/config.yaml"/>
+  </node>
+  <node pkg="rs_to_velodyne" name="rs_to_velodyne" type="rs_to_velodyne" args="XYZIRT XYZIRT" output="log" required="true"/>
+  <include file="$(arg root)/launch/imu.launch"/>
+  <rosparam command="load" file="$(arg original)/FAST-LIO-Localization/FAST-LIO-Localization-QN-master/src/third_party/FAST_LIO/config/velodyne.yaml"/>
+  <!-- Converter time is in seconds; actual scanner has 16 beams. -->
+  <param name="preprocess/scan_line" value="16"/>
+  <param name="preprocess/timestamp_unit" value="0"/>
+  <param name="pcd_save/pcd_save_en" value="false"/>
+  <param name="feature_extract_enable" value="false"/>
+  <param name="point_filter_num" value="4"/>
+  <param name="max_iteration" value="3"/>
+  <param name="filter_size_surf" value="0.5"/>
+  <param name="filter_size_map" value="0.5"/>
+  <param name="cube_side_length" value="1000.0"/>
+  <param name="runtime_pos_log_enable" value="false"/>
+  <node pkg="fast_lio" name="laserMapping" type="fastlio_mapping" output="log" required="true"/>
+</launch>

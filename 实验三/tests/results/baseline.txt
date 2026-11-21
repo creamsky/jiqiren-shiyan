@@ -1,0 +1,10 @@
+open pass=1 stage=DONE time=8.16 length=4.8688 turning=0 stopped=0.16 reversals=0 collision=0 x=4.8688 y=0 reason=
+single pass=0 stage=DRIVING time=120 length=1.28824 turning=0.380199 stopped=112.82 reversals=0 collision=0 x=1.28824 y=-2.53012e-05 reason=
+staggered pass=1 stage=DONE time=39.3 length=6.31558 turning=10.9443 stopped=11.98 reversals=8 collision=0 x=4.8777 y=-0.0710234 reason=
+wall_gap pass=0 stage=DRIVING time=120 length=1.48824 turning=0.380194 stopped=112.32 reversals=0 collision=0 x=1.48824 y=2.53012e-05 reason=
+corridor pass=1 stage=DONE time=8.16 length=4.8688 turning=0 stopped=0.16 reversals=0 collision=0 x=4.8688 y=0 reason=
+dead_end pass=0 stage=DRIVING time=120 length=1.48824 turning=0.380868 stopped=112.32 reversals=0 collision=0 x=1.48824 y=-2.53012e-05 reason=
+temporary_block pass=1 stage=DONE time=11.9 length=4.8708 turning=0 stopped=0.16 reversals=0 collision=0 x=4.8708 y=0 reason=
+close_obstacle pass=0 stage=DRIVING time=120 length=0.29024 turning=0.380191 stopped=117.52 reversals=0 collision=0 x=0.29024 y=-2.53012e-05 reason=
+offset_corridor pass=1 stage=DONE time=8.16 length=4.8688 turning=0 stopped=0.16 reversals=0 collision=0 x=4.8688 y=0 reason=
+failures=4 compute_seconds=0.270822

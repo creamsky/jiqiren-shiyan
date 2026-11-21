@@ -1,0 +1,1 @@
+samples=20 obstacle_points=7324 mean_ms=0.428516 max_ms=1.20387 state=straight reason=

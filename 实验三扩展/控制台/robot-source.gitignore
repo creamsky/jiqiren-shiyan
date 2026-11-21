@@ -1,0 +1,12 @@
+**/build/
+**/devel/
+**/devel_isolated/
+**/build_isolated/
+**/logs/
+**/maps/
+**/__pycache__/
+*.pyc
+*.obj
+*.exe
+*.bag
+*.pcd

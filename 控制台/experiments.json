@@ -1,0 +1,80 @@
+[
+  {
+    "id": "lab1",
+    "title": "实验一",
+    "name": "建图与定位",
+    "category": "感知与定位",
+    "icon": "map",
+    "badge": "30 秒建图",
+    "description": "30 秒建图、保存地图并验证定位",
+    "enabled": true
+  },
+  {
+    "id": "lab2",
+    "title": "实验二",
+    "name": "转向与直行",
+    "category": "运动控制",
+    "icon": "route",
+    "badge": "45° / 5 m",
+    "description": "原地左转 45°，随后直线行驶 5 m",
+    "enabled": true
+  },
+  {
+    "id": "lab2-eight",
+    "title": "实验二扩展",
+    "name": "八字巡航",
+    "category": "运动控制",
+    "icon": "loop",
+    "badge": "8 字轨迹",
+    "description": "自定义半径与起点，完成一整圈八字路线",
+    "enabled": true,
+    "parameters": [
+      {
+        "key": "radius",
+        "type": "number",
+        "label": "单圆半径",
+        "unit": "m",
+        "min": 0.5,
+        "max": 10,
+        "step": 0.1,
+        "default": 2
+      },
+      {
+        "key": "startPoint",
+        "type": "choice",
+        "label": "当前位置作为",
+        "default": "cross",
+        "options": [
+          {
+            "value": "cross",
+            "label": "交叉点"
+          },
+          {
+            "value": "outer",
+            "label": "圆的外侧"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "lab3",
+    "title": "实验三",
+    "name": "环境感知与自主避障",
+    "category": "感知与避障",
+    "icon": "route",
+    "badge": "自主绕障",
+    "description": "接近后连续绕障，尽早回原路线，到达前方 10 m 固定终点",
+    "enabled": true
+  },
+  {
+    "id": "lab3-xy",
+    "title": "实验三扩展",
+    "name": "点选终点与自主避障",
+    "category": "感知与避障",
+    "icon": "route",
+    "badge": "自主绕障",
+    "description": "准备实验后，在左侧已配准点云选取终点，或输入 SLAM 坐标，再开始导航。单次距离不超过 30 m。",
+    "enabled": true
+  }
+]

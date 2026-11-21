@@ -1,0 +1,46 @@
+<launch>
+  <arg name="gui" default="true"/><arg name="roof_z" default="0.175"/><arg name="early_avoidance" default="true"/><arg name="planner" default="dwa_early"/>
+  <rosparam command="load" ns="scout_lab_bridge/limits" file="$(find scout_lab)/config/motion_limits.json"/>
+  <include file="$(find gazebo_ros)/launch/empty_world.launch"><arg name="gui" value="$(arg gui)"/><arg name="paused" value="false"/><arg name="use_sim_time" value="true"/><arg name="world_name" value="$(find scout_lab)/worlds/laboratory.world"/></include>
+  <param name="robot_description" command="/usr/bin/python3 '$(find scout_lab)/scripts/robot_description.py' $(arg roof_z)"/>
+  <node pkg="gazebo_ros" type="spawn_model" name="spawn_scout" args="-urdf -param robot_description -model scout_mini -z 0.22"/>
+  <node pkg="robot_state_publisher" type="robot_state_publisher" name="robot_state_publisher"/>
+  <include file="$(find scout_lab)/launch/localization.launch"/>
+  <node pkg="tf2_ros" type="static_transform_publisher" name="body_alias" args="0 0 0 0 0 0 base_link body"/>
+  <node pkg="move_base" type="move_base" name="move_base" output="screen">
+    <rosparam command="load" file="$(find lab3_dwa)/navigation.yaml"/>
+    <rosparam command="load" ns="global_costmap" file="$(find scout_lab)/config/lidar_voxels.yaml"/>
+    <rosparam command="load" ns="local_costmap" file="$(find scout_lab)/config/lidar_voxels.yaml"/>
+    <param name="local_costmap/obstacles/publish_voxel_map" value="true"/>
+    <rosparam command="load" file="$(find scout_lab)/config/mpc.yaml"/>
+    <rosparam command="load" file="$(find scout_lab)/config/teb.yaml"/>
+    <remap from="cmd_vel" to="/scout_lab/proposal"/>
+    <param name="DWAPlannerROS/odom_topic" value="/scout_lab/odom"/>
+    <!-- Keep the planner's legal footprint outside the last-stage guard, so it
+         can select a different trajectory before the guard has to stop it. -->
+    <param name="global_costmap/footprint_padding" value="0.04"/>
+    <param name="local_costmap/footprint_padding" value="0.04"/>
+    <param name="global_costmap/obstacles/lidar/sensor_frame" value="velodyne"/>
+    <param name="local_costmap/obstacles/lidar/sensor_frame" value="velodyne"/>
+    <param name="global_costmap/obstacles/lidar/min_obstacle_height" value="0.045"/>
+    <param name="local_costmap/obstacles/lidar/min_obstacle_height" value="0.045"/>
+    <rosparam ns="global_costmap/obstacles">
+      observation_sources: lidar free_rays
+      lidar: {clearing: false}
+      free_rays: {topic: /scout_lab/clearing, data_type: PointCloud2, sensor_frame: velodyne, marking: false, clearing: true, raytrace_range: 6.0, min_obstacle_height: -1.0, max_obstacle_height: 1.5, expected_update_rate: 0.5}
+    </rosparam>
+    <rosparam ns="local_costmap/obstacles">
+      observation_sources: lidar free_rays
+      lidar: {clearing: false}
+      free_rays: {topic: /scout_lab/clearing, data_type: PointCloud2, sensor_frame: velodyne, marking: false, clearing: true, raytrace_range: 4.0, min_obstacle_height: -1.0, max_obstacle_height: 1.5, expected_update_rate: 0.5}
+    </rosparam>
+    <!-- Simulation candidates: start bending sooner and penalize rapid rejoining. -->
+    <param if="$(arg early_avoidance)" name="DWAPlannerROS/sim_time" value="3.0"/>
+    <param if="$(arg early_avoidance)" name="DWAPlannerROS/path_distance_bias" value="13.0"/>
+    <param if="$(arg early_avoidance)" name="DWAPlannerROS/occdist_scale" value="0.13"/>
+    <param name="oscillation_timeout" value="15.0"/>
+  </node>
+  <node pkg="scout_lab" type="lab.py" name="scout_lab_bridge" required="true" output="screen"><param name="roof_z" value="$(arg roof_z)"/><param name="planner" value="$(arg planner)"/></node>
+  <include file="$(find rosbridge_server)/launch/rosbridge_websocket.launch"><arg name="address" value="127.0.0.1"/><arg name="port" value="9091"/></include>
+</launch>
+

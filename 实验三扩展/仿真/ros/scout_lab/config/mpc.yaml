@@ -1,0 +1,58 @@
+# Based on the installed ROS mpc_local_planner_examples diff_drive quadratic_form profile.
+# Command bounds are filled from the real robot source envelope before loading the plugin.
+MpcLocalPlannerROS:
+  odom_topic: /scout_lab/odom
+  robot:
+    type: unicycle
+  footprint_model:
+    type: polygon
+    vertices: [[0.325,0.275],[0.325,-0.275],[-0.325,-0.275],[-0.325,0.275]]
+    is_footprint_dynamic: false
+  collision_avoidance:
+    min_obstacle_dist: 0.10
+    enable_dynamic_obstacles: false
+    force_inclusion_dist: 0.7
+    cutoff_dist: 3.0
+    include_costmap_obstacles: true
+    costmap_obstacles_behind_robot_dist: 1.5
+    collision_check_no_poses: 10
+  grid:
+    type: fd_grid
+    grid_size_ref: 20
+    dt_ref: 0.2
+    xf_fixed: [false,false,false]
+    warm_start: true
+    collocation_method: forward_differences
+    cost_integration_method: left_sum
+    variable_grid: {enable: false}
+  planning:
+    objective:
+      type: quadratic_form
+      quadratic_form:
+        state_weights: [2.0,2.0,0.25]
+        control_weights: [0.1,0.05]
+        integral_form: false
+    terminal_cost:
+      type: quadratic
+      quadratic: {final_state_weights: [10.0,10.0,0.5]}
+    terminal_constraint: {type: none}
+  controller:
+    outer_ocp_iterations: 1
+    xy_goal_tolerance: 0.2
+    yaw_goal_tolerance: 3.141593
+    global_plan_overwrite_orientation: true
+    global_plan_prune_distance: 1.0
+    allow_init_with_backward_motion: true
+    max_global_plan_lookahead_dist: 1.5
+    force_reinit_new_goal_dist: 1.0
+    force_reinit_new_goal_angular: 1.57
+    force_reinit_num_steps: 0
+    prefer_x_feedback: false
+    publish_ocp_results: false
+  solver:
+    type: ipopt
+    ipopt:
+      iterations: 100
+      max_cpu_time: 0.07
+      ipopt_numeric_options: {tol: 0.0001}
+      ipopt_string_options: {linear_solver: mumps, hessian_approximation: exact}

@@ -1,0 +1,17 @@
+# Generated build files
+*.exe
+*.obj
+*.o
+*.pdb
+*.ilk
+/build/
+/devel/
+/install/
+
+# Local caches and editor files
+__pycache__/
+*.pyc
+.vs/
+.DS_Store
+Thumbs.db
+~$*.docx

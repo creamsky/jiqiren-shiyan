@@ -1,0 +1,1 @@
+PASS: real ROS controller + TCP start3 + heartbeat loss + resume + bypass + latched goal stop; x=9.95517 y=0.000665725

@@ -1,0 +1,10 @@
+[Unit]
+Description=Robot lab SocketCAN 500 kbit/s
+BindsTo=sys-subsystem-net-devices-can0.device
+After=sys-subsystem-net-devices-can0.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/lab26-can-up
+ExecStop=/sbin/ip link set can0 down
