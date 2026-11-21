@@ -3,7 +3,9 @@ set -e
 cd "$(dirname "$0")"
 exec 9>.console-service.lock
 flock -x 9
-if ss -ltn | grep -q ':8766 '; then exit 0; fi
+if ss -ltn | grep -q ':8766 '; then
+  exec "${ROBOT_PYTHON:-/usr/bin/python3}" ./enable_can_mode.py
+fi
 mkdir -p logs
 setsid bash ./start_console.sh 9>&- >logs/console_service.log 2>&1 </dev/null &
 pid=$!; echo "$pid" >logs/console_service.pid
