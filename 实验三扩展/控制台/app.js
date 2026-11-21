@@ -174,7 +174,8 @@ async function refresh(){
     $('stage').textContent=online?(labels[state.stage]||state.stage||'待命'):'等待连接';$('reason').textContent=online?(state.reason||'控制器在线'):'界面已就绪，等待机器人上线';
     if(online&&state.reason==='Operator stop'){$('stage').textContent='已停止 / 待命';$('reason').textContent='已按操作请求停车；准备实验后可重新启动';}
     $('mode').textContent=!online?'未启用':manual?'手动模式':'自动模式';
-    $('driveStatus').textContent=!online?'控制连接未建立':state.manual_block_message?'驾驶受阻：'+state.manual_block_message:!mine?'取得控制权后，可启用键盘驾驶':manual?'键盘驾驶已启用 · 按住 WASD，松开停车':'点击“启用键盘驾驶”恢复或切换手动模式';
+    const remoteActive=state.feedback_fresh===true&&(state.chassis_mode===3||[1,3].includes(state.remote_switch));
+    $('driveStatus').textContent=!online?'控制连接未建立':remoteActive?'遥控器已接管，CAN 反馈在线。请停稳并将遥控器切回网络控制档。':state.manual_block_message?'驾驶受阻：'+state.manual_block_message:!mine?'取得控制权后，可启用键盘驾驶':manual?'键盘驾驶已启用 · 按住 WASD，松开停车':'点击“启用键盘驾驶”恢复或切换手动模式';
     let progress=Number(state.progress)||0,total=Number(state.total_distance)||5;
     for(const key of ['v','w'])$(key).textContent=online&&Number.isFinite(Number(state[key]))?Number(state[key]).toFixed(2):'—';
     $('obstacle').textContent=online?(state.obstacle?'有障碍':'畅通'):'—';$('paused').textContent=online?((state.paused||state.obstacle)?'暂停中':'等待 / 运行'):'等待反馈';
