@@ -1,0 +1,49 @@
+#mazeAtlas[hidden], #mazeGoals[hidden] { display: none; }
+.maze-active :is(#cloudCanvas, .scene-empty, .scene-legend, .scene-bottom, .coordinate-hint, #sceneSettings, #settingsToggle) { visibility: hidden; pointer-events: none; }
+.maze-active .scene-telemetry { bottom: 24px; }
+.maze-task :is(.measure, #taskProgress) { display: none; }
+#mazeAtlas {
+  position: absolute;
+  inset: 108px 450px 132px 28px;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid #6b8a9070;
+  border-radius: 18px;
+  background-color: #172428;
+  background-image: radial-gradient(#58707555 .8px, transparent 1px);
+  background-size: 16px 16px;
+  color: #e6efec;
+}
+#mazeCanvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.maze-key, .maze-map-controls { position: absolute; z-index: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 7px 14px; font: 11px/1.4 system-ui,sans-serif; }
+.maze-key { top: 12px; left: 12px; right: 12px; width: fit-content; max-width: calc(100% - 24px); padding: 6px 9px; background: #142024e8; border-radius: 7px; pointer-events: none; }
+.maze-key span { display: inline-flex; align-items: center; gap: 5px; }
+.maze-key i { width: 9px; height: 9px; display: inline-block; border-radius: 2px; }
+.maze-key .seen { background: #496469; }
+.maze-key .mark { background: #f8ad61; }
+.maze-key .pad { background: #845d43; }
+.maze-key .unknown { border: 1px dotted #9aacaf; }
+.maze-key .trail, .maze-key .route { width: 14px; height: 0; border-top: 2px solid #9de2df; }
+.maze-key .route { border-top: 2px dashed #ffe094; }
+.maze-map-controls { bottom: 12px; left: 12px; right: 12px; gap: 5px; }
+.maze-map-controls button, #mazeScale { border: 1px solid #53686a; border-radius: 6px; padding: 6px 9px; background: #172428f2; color: #d7e6e4; }
+.maze-map-controls button:is(:hover,:focus-visible) { background: #34484b; }
+#mazeScale { margin-left: auto; font-family: ui-monospace,monospace; }
+#mazeEmpty { position: absolute; top: 48%; left: 10%; right: 10%; text-align: center; font-size: 13px; color: #abc2c4; pointer-events: none; }
+#mazeGoals { display: grid; gap: 7px; margin: 12px 0 17px; font-size: 12px; }
+#mazeModes { display: flex; gap: 14px; border: 0; margin: 0 0 5px; padding: 0; }
+#mazeModes legend { margin-bottom: 5px; }
+#mazeModes label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+#mazeModes input { accent-color: #51998a; }
+.maze-inputs, .maze-goal-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.maze-inputs label { display: flex; gap: 6px; align-items: center; }
+.maze-inputs input { min-width: 0; width: 100%; flex: 1; padding: 6px 8px; font: inherit; color: inherit; background: transparent; border: 1px solid #7d919780; border-radius: 6px; }
+#mazeGoalState, #mazeCalibration { font-size: 11px; line-height: 1.4; }
+#mazeCalibration { opacity: .78; }
+@media (min-width: 1650px) { #mazeAtlas { right: 480px; left: 34px; top: 125px; } }
+@media (min-width: 801px) and (max-width: 1200px) { #mazeAtlas { right: 398px; left: 22px; top: 144px; } }
+@media (max-width: 800px) {
+  #mazeAtlas { inset: 113px 12px 98px; border-radius: 14px; }
+  .maze-active .scene-telemetry { bottom: 12px; }
+  .maze-key { gap: 5px 9px; font-size: 10px; }
+}

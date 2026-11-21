@@ -25,6 +25,9 @@ class GlobalRouteClient {
   }
   bool ready()const{return healthy_ && (ros::WallTime::now()-health_at_).toSec()<.5;}
   void reset(){++generation_;route_.clear();received_=-1.;next_=0.;replans=0;}
+  // A collinear extension may follow the still-fresh prefix while its new
+  // endpoint is planned. Discard any pending reply for the previous endpoint.
+  void extend(){++generation_;next_=0.;}
   unsigned replans=0;
   const lab26::Waypoints* update(lab26::Pose p,lab26::ObstaclePoint goal,const std::string& frame,double stamp,double now){
     if(pending_.valid() && pending_.wait_for(std::chrono::seconds(0))==std::future_status::ready){

@@ -3,6 +3,7 @@ const path=require('node:path');
 const robotAddress=require('./robot-address.cjs');
 const REMOTE={lab3:'bash /home/nvidia/lab26/select_experiment.sh lab2',lab1:'bash /home/nvidia/lab1/start.sh 30',stopLab1:'bash /home/nvidia/lab1/stop.sh',lab2:'bash /home/nvidia/lab26/select_experiment.sh lab2','lab2-eight':'bash /home/nvidia/lab26/select_experiment.sh lab2'};
 REMOTE['lab3-xy']=REMOTE.lab3;
+REMOTE.maze=REMOTE.lab3;
 function runSSH(command,onData){
   return new Promise((resolve,reject)=>{
     const executable=path.join(process.env.WINDIR||'C:\\Windows','System32','OpenSSH','ssh.exe');
@@ -16,7 +17,7 @@ function runSSH(command,onData){
   });
 }
 class ExperimentTasks {
-  constructor({send,stopped,ready=()=>true,run=runSSH,waitMs=2000,readyMs=15000}){Object.assign(this,{send,stopped,ready,run,waitMs,readyMs});this.task=null;this.prepared=null;this.job=null;}
+  constructor({send,stopped,ready=()=>true,run=runSSH,waitMs=2000,readyMs=15000,startMaze,prepareMaze}){Object.assign(this,{send,stopped,ready,run,waitMs,readyMs,startMaze,prepareMaze});this.task=null;this.prepared=null;this.job=null;}
   get busy(){return !!this.task && ['preparing','running','stopping'].includes(this.task.phase);}
   observe(status){
     if(!['lab2','lab2-eight','lab3','lab3-xy'].includes(this.task?.experiment)||this.task.phase!=='running')return;
@@ -35,6 +36,10 @@ class ExperimentTasks {
     if(experiment!=='lab1'&&this.prepared===experiment){
       if(!this.ready(experiment)){this.prepared=null;throw Error('定位、雷达、底盘或导航规划器未就绪，请重新准备实验');}
       if(!ownerAlive())throw Error('控制权已失效');
+      if(experiment==='maze'){
+        const task={experiment,phase:'running',exitCode:null,log:'',options};
+        this.startMaze(task,ownerAlive,options);this.task=task;return;
+      }
       this.task={experiment,phase:'running',exitCode:null,log:'',awaitingActive:true,options};this.send(experiment==='lab2-eight'?`start8 ${options.radius} ${options.startPoint}`:experiment==='lab3-xy'?`startxy ${options.goalX} ${options.goalY} ${options.goalFrame}`:experiment==='lab3'?'start3':'start');return;
     }
     const task=this.task={experiment,phase:'preparing',exitCode:null,log:'',cancelled:false,progress:0,progressLabel:'准备启动'};
@@ -51,7 +56,9 @@ class ExperimentTasks {
         if(task.cancelled||!ownerAlive())throw Error('控制权已失效或任务已取消，请重新操作');
         this.prepared=null;
         task.phase=experiment==='lab1'?'running':'preparing';
-        const code=await this.run(REMOTE[experiment],onData);
+        const reuse=experiment==='maze'&&this.prepareMaze?.();
+        if(reuse)onData('沿用在线实车定位和规划器，等待本轮地图的第一帧。\n');
+        const code=reuse?0:await this.run(REMOTE[experiment],onData);
         task.exitCode=code;
         if(task.cancelled)return;
         if(code!==0)throw Error(`远程实验命令失败 (${code})`);

@@ -17,7 +17,7 @@ function post(url,data,urgent=false){
   if(urgent)return run();
   const next=chain.then(run);chain=next.catch(()=>{});return next;
 }
-async function command(value){if(switching&&!['zero','stop','pause','heartbeat'].includes(value))return false;const epoch=controlEpoch;try{await post('/api/command',{command:value,...(['start','pause','resume','stop'].includes(value)?{experiment:$('experiment').value}:{}),...(value==='start'?{options:{...window.Workbench.options(),...($('experiment').value==='lab3-xy'?window.NavigationGoal?.():{})}}:{})},['zero','stop','pause'].includes(value));return epoch===controlEpoch;}catch(error){message(error.message);return false;}}
+async function command(value){if(switching&&!['zero','stop','pause','heartbeat'].includes(value))return false;const epoch=controlEpoch;try{await post('/api/command',{command:value,...(['start','pause','resume','stop'].includes(value)?{experiment:$('experiment').value}:{}),...(value==='start'?{options:{...window.Workbench.options(),...($('experiment').value==='lab3-xy'?window.NavigationGoal?.():{}),...($('experiment').value==='maze'?window.MazeView?.options():{})}}:{})},['zero','stop','pause'].includes(value));return epoch===controlEpoch;}catch(error){message(error.message);return false;}}
 function paintKeys(){
   const keys=new Set(held.values());
   document.querySelectorAll('[data-direction]').forEach(b=>b.classList.toggle('active',keys.has(b.dataset.direction)));
@@ -245,6 +245,7 @@ async function refresh(){
     if(selected==='lab3')$('progressLabel').textContent='沿原路线进度';
     $('bar').style.width=percent+'%';$('progressPercent').textContent=percent.toFixed(0)+'%';
     $('taskProgress').setAttribute('aria-valuenow',percent.toFixed(0));
+    window.MazeView?.status(data,online,mine);
     // Other authenticated tabs may still issue an emergency task stop.
     $('stop').disabled=!online&&!taskActive;
     window.RoomUI?.render(data.room,online,data.urls);

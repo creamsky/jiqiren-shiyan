@@ -16,7 +16,7 @@ window.Workbench = (() => {
     return Number(Math.max(min,Math.min(max,min+Math.round((safe-min)/step)*step)).toFixed(6));
   }
   function commit(input,value){
-    if(input.id==='goalX'||input.id==='goalY')return;
+    if(input.id==='goalX'||input.id==='goalY'||input.closest('#mazeGoals'))return;
     input.value=normalize(input,value);input.dataset.last=input.value;
     document.querySelectorAll('[data-sync]').forEach(slider=>{if(slider.dataset.sync===input.id)slider.value=input.value;});
     input.dispatchEvent(new Event('input',{bubbles:true}));

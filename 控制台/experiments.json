@@ -76,5 +76,15 @@
     "badge": "自主绕障",
     "description": "准备实验后，在左侧已配准点云选取终点，或输入 SLAM 坐标，再开始导航。单次距离不超过 30 m。",
     "enabled": true
+  },
+  {
+    "id": "maze",
+    "title": "实车迷宫",
+    "name": "迷宫探索",
+    "category": "感知与避障",
+    "icon": "grid",
+    "badge": "累计全图",
+    "description": "沿地图探索岔路，或自主漫游绕开桩桶。可标记搜索区和最终出口。",
+    "enabled": true
   }
 ]

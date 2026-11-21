@@ -10,12 +10,15 @@ const {ExperimentTasks}=require('./experiments.cjs');
 const {Trajectory}=require('./trajectory.cjs');
 const robotAddress=require('./robot-address.cjs');
 const gazeboView=require('./gazebo-view.cjs');
+const {MazeMap,distance}=require('../迷宫/maze-map.cjs');
+const {MazeScanStream}=require('../迷宫/scan-stream.cjs');
+const {MazeMission}=require('../迷宫/mission.cjs');
 
 const COMMANDS = new Set(['status','start','pause','resume','stop','manual','auto','w','s','a','d','drive','zero','heartbeat']);
 const MANUAL_ERRORS={odometry_unavailable:'定位未就绪，请先准备传感器',lidar_unavailable:'雷达未就绪，请先准备传感器',feedback_unavailable:'底盘反馈超时',chassis_fault:'底盘报告故障',chassis_mode:'底盘尚未处于网络/CAN 模式',remote_takeover:'遥控器开关正在接管底盘',not_stopped:'请先停车，再恢复手动驾驶',heartbeat_missing:'控制心跳已过期，请重新启用键盘驾驶'};
 const experiments = JSON.parse(fs.readFileSync(path.join(__dirname,'experiments.json'),'utf8'));
-const availableExperiments = experiments.map(item=>({...item,enabled:item.enabled === true && ['lab1','lab2','lab2-eight','lab3','lab3-xy'].includes(item.id)}));
-function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, leaseMs=1000, cloudStream=null, deferredHardware=false } = {}) {
+const availableExperiments = experiments.map(item=>({...item,enabled:item.enabled === true && ['lab1','lab2','lab2-eight','lab3','lab3-xy','maze'].includes(item.id)}));
+function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, leaseMs=1000, cloudStream=null, deferredHardware=false, mazeStreamFactory=fn=>new MazeScanStream(fn) } = {}) {
   const simDir=[path.join(__dirname,'../实验三扩展/仿真'),path.join(__dirname,'../仿真')].find(p=>fs.existsSync(path.join(p,'web/index.html')));
   const sim=simDir?new (require('./sim-bridge.cjs').SimulationBridge)(simDir):null;
   const displays=new Set();
@@ -41,6 +44,7 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
     },error=>{if(linkRequest===request)hardwareLink={phase:'error',message:error.message};}).finally(()=>{if(linkRequest===request)linkRequest=null;});
   }
   function detachHardware(){
+    mazeStream.stop();resetMaze();
     transportStarted=false;linkRequest?.abort();linkRequest=null;clearTimeout(retry);
     connected=false;status={};statusAt=0;cloud={points:[],frame:''};cloudAt=0;trajectory.clear();
     cloudStream?.stop();socket?.destroy();socket=null;require('./launch.cjs').closeRobotLink();
@@ -50,12 +54,50 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
   const send = command => { if (!connected || !socket?.writable) return false; socket.write(command + '\n'); return true; };
   let cloud={points:[],frame:''},cloudAt=0;
   const trajectory=new Trajectory();
+  const mazeMap=new MazeMap();
+  const mission=new MazeMission(mazeMap,send);
+  let mazeSeen=0;
+  const mazeStream=mazeStreamFactory(sample=>{
+    if(!connected||!trajectory.pose||Date.now()-trajectory.at>650||!status.feedback_fresh||
+       sample.generation!==status.map_generation||sample.frame!==trajectory.frame||
+       Math.abs(trajectory.stamp-sample.stamp)>.45||!Array.isArray(sample.pose)||distance(trajectory.pose,sample.pose)>.3||
+       Math.abs(Math.atan2(Math.sin(trajectory.pose[2]-sample.pose[2]),Math.cos(trajectory.pose[2]-sample.pose[2])))>.35)return false;
+    return mazeMap.accept(sample);
+  });
+  function resetMaze(){
+    mazeStream.stop();
+    mazeMap.reset();
+    if(tasks.prepared==='maze')tasks.prepared=null;
+  }
+  function mazeHealthy(){
+    return connected&&Date.now()-statusAt<700&&Date.now()-mazeMap.at<850&&Date.now()-trajectory.at<600&&
+      mazeMap.generation===status.map_generation&&status.maze_protocol===2&&status.xy_planner==='navfn_pursuit'&&
+      status.dwa_ready===true&&status.sensors_ready===true&&status.feedback_fresh===true&&status.chassis_mode===1&&
+      status.chassis_errors===0&&[0,2].includes(status.remote_switch)&&status.mode!=='manual';
+  }
   const stopped=()=>connected && Date.now()-statusAt<500 && status.feedback_fresh===true &&
       [status.v,status.w,status.feedback_v,status.feedback_w].every(Number.isFinite)&&
       Math.abs(status.v)<0.001&&Math.abs(status.w)<0.001&&Math.abs(status.feedback_v)<0.02&&Math.abs(status.feedback_w)<0.02&&
       (status.paused || ['FAULT','DONE','IDLE'].includes(status.stage));
   const tasks=new ExperimentTasks({send,run:sshRunner,stopped,
-    ready:experiment=>connected&&Date.now()-statusAt<1500&&status.sensors_ready===true&&status.feedback_fresh===true&&(experiment!=='lab3-xy'||status.dwa_enabled!==true||status.dwa_ready===true)});
+    prepareMaze:()=>{
+      if(status.maze_protocol!==2)throw Error('车端迷宫控制程序尚未就绪');
+      if(status.chassis_mode!==1||![0,2].includes(status.remote_switch)||status.chassis_errors!==0)
+        throw Error('请确认底盘处于 CAN 控制档，且遥控器已释放控制');
+      const reuse=status.sensors_ready&&status.dwa_ready&&status.xy_planner==='navfn_pursuit'&&Boolean(status.map_generation);
+      if(status.mode==='manual')send('auto');
+      mazeMap.reset();mazeSeen=Date.now();mazeStream.start();
+      return reuse;
+    },
+    startMaze:(task,alive,options)=>{
+      if(!mazeHealthy()||options.mapId!==mazeMap.id||!stopped())throw Error('请确认本轮地图、迷宫控制器和停车反馈已就绪');
+      if(options.hint!=null){
+        if(!Array.isArray(options.hint)||options.hint.length!==2)throw Error('搜索区需要前方和左侧两个坐标');
+        mazeMap.goals({kind:'hint',id:options.mapId,x:options.hint[0],y:options.hint[1]});
+      }
+      mission.start(task,alive);
+    },
+    ready:experiment=>experiment==='maze'?mazeHealthy():connected&&Date.now()-statusAt<1500&&status.sensors_ready===true&&status.feedback_fresh===true&&(experiment!=='lab3-xy'||status.dwa_enabled!==true||status.dwa_ready===true)});
   const room=new ControlRoom({leaseMs,connected:()=>connected,
     stopped:()=>stopped()&&(!room.barrier||statusAt>room.barrier.at)&&tasks.task?.phase!=='stopping',
     stop:()=>{send('zero');send('pause');tasks.stop();}});
@@ -74,20 +116,26 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) {
           if(value.type==='cloud'){
             cloud={points:Array.isArray(value.points)?value.points.filter(point=>Array.isArray(point)&&point.length===3&&point.every(Number.isFinite)).slice(0,8000):[],frame:String(value.frame||'').replace(/^\//,'').slice(0,100),registered:value.registered===true,stamp:Number.isFinite(value.stamp)?value.stamp:null};cloudAt=Date.now();
-          }else if(value.type==='pose'){trajectory.add(value);}
+          }else if(value.type==='pose'){const epoch=trajectory.epoch;trajectory.add(value);if(epoch!==trajectory.epoch)resetMaze();}
           else if(value.type==='ack'){
             if(value.command==='manual'&&manualAck){const pending=manualAck;manualAck=null;clearTimeout(pending.timer);pending.resolve(value);}
           }
-          else{status = {...value,manual_block_message:MANUAL_ERRORS[value.manual_block_reason]||''}; statusAt = Date.now();tasks.observe(status);}
+          else{status = {...value,manual_block_message:MANUAL_ERRORS[value.manual_block_reason]||''}; statusAt = Date.now();tasks.observe(status);if(mazeMap.generation&&mazeMap.generation!==status.map_generation)resetMaze();}
         } } catch {}
       }
     });
     socket.on('error',()=>{});
-    socket.on('close',()=> {if(socket!==peer)return;connected = false;hardwareLink={phase:'error',message:'机器人连接中断，可以重新连接'}; room.disconnected();trajectory.clear(); if(manualAck){clearTimeout(manualAck.timer);manualAck.resolve({ok:false,reason:'控制连接已断开'});manualAck=null;} if (!closing&&transportStarted) retry = setTimeout(connect,1000); });
+    socket.on('close',()=> {if(socket!==peer)return;connected = false;hardwareLink={phase:'error',message:'机器人连接中断，可以重新连接'};room.disconnected();trajectory.clear();mazeStream.stop();resetMaze();if(manualAck){clearTimeout(manualAck.timer);manualAck.resolve({ok:false,reason:'控制连接已断开'});manualAck=null;} if (!closing&&transportStarted) retry = setTimeout(connect,1000); });
   }
   let retry;
   const timer = setInterval(()=> {
     room.tick();
+    if(connected&&(Date.now()-mazeSeen<10000||tasks.task?.experiment==='maze'&&(tasks.busy||tasks.prepared==='maze')))mazeStream.start();
+    else mazeStream.stop();
+    if(mission.run){
+      mission.tick({status,statusAt,healthy:mazeHealthy(),stopped:stopped()});
+      if(tasks.task?.phase==='failed')tasks.prepared=null;
+    }
   },100);
   const reply = (res, code, data) => { res.writeHead(code, {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}); res.end(JSON.stringify(data)); };
   const server = http.createServer(async (req,res)=> {
@@ -116,6 +164,11 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         fs.createReadStream(path.join(simDir,file)).on('error',()=>res.destroy()).pipe(res);return;
       }
       if (req.url === '/api/experiments') return reply(res,200,{experiments:availableExperiments});
+      if(req.url==='/api/maze'||req.url.startsWith('/api/maze?')){
+        const q=new URL(req.url,origin).searchParams;mazeSeen=Date.now();
+        return reply(res,200,{...mazeMap.snapshot(q.get('id'),Number(q.get('since'))||0),
+          streamError:mazeStream.error,healthy:mazeHealthy(),paused:mission.run?.paused||false,mode:mission.run?.mode||null});
+      }
       if (req.url === '/api/session') {
         try{
           const token=room.session(localRequest(req),deviceKey(req.socket.remoteAddress,addresses));return reply(res,200,{token,room:room.snapshot(token),urls});
@@ -131,7 +184,8 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
       }
       if (req.url === '/api/trajectory') return reply(res,200,{...trajectory.snapshot(),connected});
       const files = {'/':'index.html','/hardware/':'index.html','/app.js':'app.js','/ui.js':'ui.js','/room.js':'room.js','/liquid.js':'liquid.js','/cloud.js':'cloud.js','/style.css':'style.css','/glass.css':'glass.css','/vendor/three.module.min.js':'vendor/three.module.min.js','/vendor/three.core.min.js':'vendor/three.core.min.js'};
-      if (!files[req.url]) return reply(res,404,{error:'未找到'});
+      Object.assign(files,{'/maze.js':'../迷宫/view.js','/maze.css':'../迷宫/view.css'});
+      if (!Object.hasOwn(files,req.url)) return reply(res,404,{error:'未找到'});
       res.writeHead(200,{'Content-Type':req.url.endsWith('.js')?'text/javascript; charset=utf-8':req.url.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8','Cache-Control':'no-store','Content-Security-Policy':"default-src 'self'; connect-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'",'X-Content-Type-Options':'nosniff'});
       return fs.createReadStream(path.join(__dirname,files[req.url])).pipe(res);
     }
@@ -200,6 +254,12 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
       }));
       return run((ok,output)=>reply(res,200,{ok,ip,output:String(output).slice(0,2000)}));
     }
+    if(req.url==='/api/maze/goal'){
+      if(!room.valid(token,body.lease)||!connected)return reply(res,409,{error:'请先取得控制权'});
+      if(tasks.prepared!=='maze'||!mazeHealthy())return reply(res,409,{error:'请先准备本轮迷宫地图'});
+      try{mazeMap.goals(body);mission.retarget();return reply(res,200,{ok:true});}
+      catch(error){return reply(res,409,{error:error.message});}
+    }
     if(req.url !== '/api/command') return reply(res,404,{error:'未找到'});
     const { command }=body;
     if(command!=='claim' && !COMMANDS.has(command)) return reply(res,400,{error:'未知指令'});
@@ -216,6 +276,11 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
     }
     // Every movement is fenced by the current lease, including queued HTTP requests.
     if(!room.valid(token,body.lease))return reply(res,409,{error:'控制权已变更或正在停车，请等待并重新操作'});
+    if(mission.run){
+      if(command==='pause'){mission.pause();return reply(res,200,{ok:true});}
+      if(command==='resume'){mission.resume();return reply(res,200,{ok:true});}
+      if(!['status','zero'].includes(command))return reply(res,409,{error:'请先停止迷宫任务'});
+    }
     if(command==='drive'){
       const {linear,angular,speed,turn}=body;
       if(![-1,0,1].includes(linear)||![-1,0,1].includes(angular)||!Number.isFinite(speed)||speed<0.1||speed>1.5||!Number.isFinite(turn)||turn<0.05||turn>0.50)

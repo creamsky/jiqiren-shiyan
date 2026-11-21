@@ -1,6 +1,6 @@
 {
   "private": true,
-  "scripts": {"test":"node --test *.test.cjs"},
+  "scripts": {"test":"node --test *.test.cjs ../迷宫/*.test.cjs"},
   "devDependencies": {
     "jsdom": "^26.1.0"
   }

@@ -7,6 +7,7 @@
 #include "basic_control/global_route_client.h"
 #include "basic_control/ground_returns.h"
 #include "basic_control/clearing_rays.h"
+#include "basic_control/maze_guard.h"
 #include "basic_control/scan_alignment.h"
 #include <ros/ros.h>
 #include <ros/master.h>
@@ -103,6 +104,12 @@ class Experiment {
         else if((last_console_seen>0&&t-last_console_seen>10)||
                 (last_console_seen<0&&t-console_started>60)) return 0;
       }
+      if(!maze_leg.empty()&&!operator_pause&&!manual&&motion->stage!=lab26::Stage::Done&&motion->stage!=lab26::Stage::Fault){
+        std::string current_generation;
+        if(!nh.getParamCached("/lab26/map_generation",current_generation)||current_generation!=map_generation){
+          motion->stop("Maze map generation changed");operator_pause=true;
+        }
+      }
       const bool terminal=motion->stage==lab26::Stage::Done||motion->stage==lab26::Stage::Fault;
       // A sensor launch may own and restart roscore during experiment switching.
       // Re-register only while stopped; never clear a fault or command movement.
@@ -162,6 +169,12 @@ class Experiment {
                   cmd=path_tracker.step(path?*path:empty,pose,goal,motion->avoidance_points,rays,
                     previous_cmd,{feedback_v,feedback_w},t,dt,linear_rate,angular_rate);
                   motion->external_state=path_tracker.state;motion->external_reason=path_tracker.reason;
+                  if(!maze_leg.empty() && (cmd.v!=0. || cmd.w!=0.)){
+                    cmd=lab26::mazeSafeCommand(motion->avoidance_points,{feedback_v,feedback_w},cmd,maze_extension);
+                    if(cmd.v==0.&&cmd.w==0.){
+                      motion->external_state="maze_blocked";motion->external_reason="Cone base clearance";
+                    }
+                  }
                   if(path_tracker.finished)motion->stage=lab26::Stage::Done;
                 }else{
                   motion->external_state="waiting_route";motion->external_reason="Waiting for current global path";
@@ -245,6 +258,7 @@ class Experiment {
           status_json.pop_back();status_json+=",\"avoidance_reason\":\""+motion->avoidanceReason()+"\",\"avoidance_replans\":"+std::to_string((use_global_route&&motion->cfg.xy_goal?int(global_route->replans):motion->avoidanceReplans()))+",\"goal_distance\":"+std::to_string(motion->avoidanceRemaining())+",\"avoidance_version\":6,\"last_can_tx_errno\":"+std::to_string(last_can_tx_errno)+",\"can_tx_retries\":"+std::to_string(can_tx_retries)+"}";
           status_json.pop_back();status_json+=std::string(",\"dwa_enabled\":")+(use_global_route?"true":"false")+",\"dwa_ready\":"+(global_route->ready()?"true":"false")+"}";
           status_json.pop_back();
+          status_json+=",\"maze_protocol\":2,\"maze_leg\":\""+maze_leg+"\"";
           status_json+=std::string(",\"xy_planner\":\"")+(use_global_route?"navfn_pursuit":"local_xy")+"\",\"xy_local_recovery\":false}";
           console->status(status_json);
         }
@@ -262,14 +276,17 @@ class Experiment {
   std::unique_ptr<lab26::Motion> motion; lab26::Pose pose,stable_ref,previous;
   std::unique_ptr<Console> console;
   std::unique_ptr<GlobalRouteClient> global_route;
-  ros::Publisher obstacle_pub,clearing_pub;
+  ros::Publisher obstacle_pub,clearing_pub,maze_obstacle_pub;
   std::string master_id,map_generation;
+  std::string maze_leg;
+  double maze_extension=.18;
   void bindRosIO(){
     pose_sub.shutdown();cloud_sub.shutdown();world_cloud_sub.shutdown();
-    cmd_pub.shutdown();status_pub.shutdown();obstacle_pub.shutdown();clearing_pub.shutdown();global_route.reset();
+    cmd_pub.shutdown();status_pub.shutdown();obstacle_pub.shutdown();clearing_pub.shutdown();maze_obstacle_pub.shutdown();global_route.reset();
     global_route.reset(new GlobalRouteClient(nh));
     obstacle_pub=nh.advertise<sensor_msgs::PointCloud2>("/lab26/obstacles",1);
     clearing_pub=nh.advertise<sensor_msgs::PointCloud2>("/lab26/clearing_rays",1);
+    maze_obstacle_pub=nh.advertise<sensor_msgs::PointCloud2>("/lab26/maze_obstacles",1);
     cmd_pub=nh.advertise<geometry_msgs::Twist>("/lab26/command",1);
     status_pub=nh.advertise<std_msgs::String>("/lab26/status",1,true);
     pose_sub=nh.subscribe("/Odometry",1,&Experiment::onPose,this);
@@ -324,6 +341,9 @@ class Experiment {
         for(size_t i=0;i<aligned.size();++i)if(scan.returns[i].mark)marks.push_back(aligned[i]);
         const double stamp=std::min(end,pose_stamp);
         publishPoints(clearing_pub,clearing,stamp);publishPoints(obstacle_pub,marks,stamp);
+        // Navfn masks rear marks. The persistent maze map needs every observed
+        // obstacle for checking turns and the path back from a dead end.
+        if(maze_obstacle_pub.getNumSubscribers())publishPoints(maze_obstacle_pub,aligned,stamp);
         if(latest_raw_start==scan.start){
           avoid_points.swap(aligned);avoid_cloud_pose=reference;
           front_gap=lab26::bumperClearance(avoid_points,0.);rear_gap=lab26::bumperClearance(avoid_points,lab26::pi);
@@ -357,15 +377,38 @@ class Experiment {
     if(c=="zero") { manual_cmd={};return; }
     if(c=="pause") { operator_pause=true;manual_cmd={};return; }
     if(t-last_heartbeat>0.4) { if(c=="manual")manualReply(false,"heartbeat_missing");return; }
-    if(c=="start"||c=="start3"||c.rfind("startxy ",0)==0||c.rfind("start8 ",0)==0) {
+    if(c.rfind("extendmaze ",0)==0){
+      std::istringstream input(c);std::string verb,previous,next,frame,generation,extra;
+      lab26::ObstaclePoint goal;
+      if(!(input>>verb>>previous>>next>>goal.x>>goal.y>>frame>>generation)||(input>>extra)||
+         operator_pause||manual||!use_global_route||motion->stage!=lab26::Stage::Driving||maze_leg.empty()||
+         previous!=maze_leg||next==previous||next.size()!=36||next.find_first_not_of("0123456789abcdef-")!=std::string::npos||
+         generation!=map_generation||frame!=pose_frame||manualBlocked(t)||!global_route->ready()||
+         !lab26::mazeExtensionFits(pose,{motion->cfg.goal_x,motion->cfg.goal_y},goal))return;
+      motion->cfg.goal_x=goal.x;motion->cfg.goal_y=goal.y;maze_leg=next;
+      global_route->extend();return;
+    }
+    const bool maze=c.rfind("startmaze ",0)==0;
+    if(c=="start"||c=="start3"||maze||c.rfind("startxy ",0)==0||c.rfind("start8 ",0)==0) {
       if(motion->stage!=lab26::Stage::Waiting&&motion->stage!=lab26::Stage::Done&&motion->stage!=lab26::Stage::Fault) return;
       auto cfg=motion->cfg;cfg.figure_eight=c.rfind("start8 ",0)==0;cfg.avoidance=c=="start3";
-      cfg.xy_goal=c.rfind("startxy ",0)==0;
+      cfg.xy_goal=maze||c.rfind("startxy ",0)==0;
+      std::string leg;
       if(cfg.xy_goal){
         std::istringstream input(c);std::string verb,frame,extra;
-        if(!(input>>verb>>cfg.goal_x>>cfg.goal_y>>frame)||(input>>extra)||
+        if(!(input>>verb>>cfg.goal_x>>cfg.goal_y>>frame)||
            !std::isfinite(cfg.goal_x)||!std::isfinite(cfg.goal_y)||frame!=pose_frame||
            t-pose_time>.5||std::hypot(cfg.goal_x-pose.x,cfg.goal_y-pose.y)>30)return;
+        if(maze){
+          std::string generation;
+          double extension;
+          if(!(input>>generation>>leg>>extension)||generation!=map_generation||!use_global_route||
+             leg.empty()||leg.size()>40||leg.find_first_not_of("0123456789abcdef-")!=std::string::npos||
+             !std::isfinite(extension)||extension<.02||extension>.60||
+             std::hypot(cfg.goal_x-pose.x,cfg.goal_y-pose.y)>2.05)return;
+          if(input>>extra)return;
+          maze_extension=extension;
+        }else if(input>>extra)return;
         cfg.avoidance=true;
       }
       cfg.distance=cfg.avoidance?10.0:default_distance;
@@ -375,6 +418,7 @@ class Experiment {
       }
       run_timeout=cfg.figure_eight?4*lab26::pi*cfg.radius/std::min(cfg.speed,0.8*cfg.max_w*cfg.radius)*2+90:180;
       motion.reset(new lab26::Motion(cfg));
+      maze_leg=leg;
       global_route->reset();path_tracker=lab26::PathTracker();navigation_idle=false;
       manual=false;manual_cmd={};operator_pause=false;obstacle_pause=false;created=t;clear_since=-1;no_response_since=-1;
     } else if(c=="resume") { operator_pause=false;navigation_idle=false; }

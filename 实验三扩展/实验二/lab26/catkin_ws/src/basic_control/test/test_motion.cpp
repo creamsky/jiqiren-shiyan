@@ -9,12 +9,21 @@
 #include "basic_control/path_tracker.h"
 #include "basic_control/ground_returns.h"
 #include "basic_control/clearing_rays.h"
+#include "basic_control/maze_guard.h"
 #include <iostream>
 #include <cstdlib>
 #include <stdexcept>
 void require(bool ok,const char* msg) { if(!ok) { std::cerr<<"FAIL: "<<msg<<std::endl;std::exit(1); } }
 void testRetreat(){
   using namespace lab26;
+  require(!mazeBrakeClear({{.50,.29}}, {.18,0}, .18), "Unseen cone base overlaps forward braking sweep");
+  require(!mazeBrakeClear({{-.48,0}}, {-.10,0}, .18), "Cone base behind the wheels blocks reverse");
+  require(mazeBrakeClear({{.5,.65},{.5,-.65}}, {.18,0}, .18), "Clear gate permits a straight passage");
+  const auto reduced=mazeSafeCommand({{.62,0}}, {}, {.18,0}, .18);
+  require(reduced.v>0.&&reduced.v<.18,"A shorter clear braking sweep permits a slower approach");
+  require(mazeSafeCommand({{.62,0}}, {.18,0}, {.09,0}, .18).v==0.,"An unsafe measured stopping sweep overrides a slower proposal");
+  require(mazeExtensionFits({}, {.75,0}, {1.60,.15}),"Fresh, nearly collinear roaming lookahead can extend");
+  require(!mazeExtensionFits({}, {.75,0}, {0,1.6})&&!mazeExtensionFits({}, {.1,0}, {1.6,0}),"Corners and already-arrived goals cannot be extended in motion");
   RouteRetreat recorded;
   for(int i=0;i<=20;++i)recorded.observe({.03*i,0,0},{.15,0},{.15,0},.2*i);
   std::vector<ObstaclePoint> world{{1.05,0}};

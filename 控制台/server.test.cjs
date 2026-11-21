@@ -27,7 +27,7 @@ test('loopback API enforces origin, token, exclusive lease, ordering, deadman an
     const second=await (await fetch(base+'/api/session')).json();
     await delay(550);
     const registry=await (await fetch(base+'/api/experiments')).json();
-    assert.deepEqual(registry.experiments.map(item=>item.id),['lab1','lab2','lab2-eight','lab3','lab3-xy']);
+    assert.deepEqual(registry.experiments.map(item=>item.id),['lab1','lab2','lab2-eight','lab3','lab3-xy','maze']);
     assert.equal(registry.experiments[0].enabled,true);
     peer.write(JSON.stringify({type:'cloud',frame:'velodyne',points:Array.from({length:1005},()=>[1,2,3])})+'\n');
     peer.write(JSON.stringify({type:'pose',stamp:10,pose:[1,2,0.3]})+'\n');
