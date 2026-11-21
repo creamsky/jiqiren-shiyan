@@ -14,3 +14,11 @@ test('world frame, elevation and quaternion are retained; frame changes break th
  const epoch=t.snapshot().epoch;t.add({stamp:2,frame:'map',pose:[1.1,2,.4],position:[1.1,2,.8]});
  assert.equal(t.snapshot().positions.length,1);assert(t.snapshot().epoch>epoch);assert.equal(t.snapshot().frame,'map');
 });
+test('calibrated lidar origin and body mask follow the measured scan-time attitude, not the last position',()=>{
+ const t=new Trajectory(),q=[0,0,Math.SQRT1_2,Math.SQRT1_2];
+ for(const [stamp,x] of [[1,3],[1.1,3.1]])t.add({stamp,frame:'camera_init',pose:[x,1,Math.PI/2],position:[x,1,.4],quaternion:q});
+ const sensor=t.lidarAt(1.05,[0,0,.28]);assert.ok(Math.abs(sensor.origin[0]-3.05)<1e-6);assert.ok(Math.abs(sensor.origin[2]-.68)<1e-6);
+ assert.ok(sensor.self([3.05,1.31,.3]));assert.equal(sensor.self([3.05,1.34,.3]),false);
+ assert.equal(sensor.self([3.34,1,.3]),false);assert.equal(sensor.self([3.05,1,.70]),false);
+ assert.equal(t.lidarAt(.5,[0,0,.28]),null);assert.equal(t.lidarAt(1.05,null),null);
+});

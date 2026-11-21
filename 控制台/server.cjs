@@ -13,6 +13,7 @@ const gazeboView=require('./gazebo-view.cjs');
 const {MazeMap,distance}=require('../迷宫/maze-map.cjs');
 const {MazeScanStream}=require('../迷宫/scan-stream.cjs');
 const {MazeMission}=require('../迷宫/mission.cjs');
+const {RegisteredMap}=require('../迷宫/registered-map.cjs');
 
 const COMMANDS = new Set(['status','start','pause','resume','stop','manual','auto','w','s','a','d','drive','zero','heartbeat']);
 const MANUAL_ERRORS={odometry_unavailable:'定位未就绪，请先准备传感器',lidar_unavailable:'雷达未就绪，请先准备传感器',feedback_unavailable:'底盘反馈超时',chassis_fault:'底盘报告故障',chassis_mode:'底盘尚未处于网络/CAN 模式',remote_takeover:'遥控器开关正在接管底盘',not_stopped:'请先停车，再恢复手动驾驶',heartbeat_missing:'控制心跳已过期，请重新启用键盘驾驶'};
@@ -54,27 +55,47 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
   const send = command => { if (!connected || !socket?.writable) return false; socket.write(command + '\n'); return true; };
   let cloud={points:[],frame:''},cloudAt=0;
   const trajectory=new Trajectory();
+  const registeredMap=new RegisteredMap();
   const mazeMap=new MazeMap();
   const mission=new MazeMission(mazeMap,send);
-  let mazeSeen=0;
+  let mazeSeen=0,lidarOffset=null,pendingCloud=null;
+  function registerPending(){
+    if(!pendingCloud||!lidarOffset)return;
+    if(Date.now()-cloudAt>500){pendingCloud=null;return;}
+    if(registeredMap.accept(pendingCloud,trajectory,status.map_generation,Date.now(),lidarOffset))pendingCloud=null;
+  }
   const mazeStream=mazeStreamFactory(sample=>{
+    if(!connected)return false;
+    const offset=sample.lidarOffset;
+    const calibrated=Array.isArray(offset)&&offset.length===3&&offset.every(v=>Number.isFinite(v)&&Math.abs(v)<2);
+    if(sample.type==='lidar_mount'){lidarOffset=calibrated?offset:null;return calibrated;}
     if(!connected||!trajectory.pose||Date.now()-trajectory.at>650||!status.feedback_fresh||
        sample.generation!==status.map_generation||sample.frame!==trajectory.frame||
        Math.abs(trajectory.stamp-sample.stamp)>.45||!Array.isArray(sample.pose)||distance(trajectory.pose,sample.pose)>.3||
        Math.abs(Math.atan2(Math.sin(trajectory.pose[2]-sample.pose[2]),Math.cos(trajectory.pose[2]-sample.pose[2])))>.35)return false;
+    lidarOffset=calibrated?offset:null;
+    if(!status.maze_height_observations)sample.heightHits=[];
     return mazeMap.accept(sample);
   });
   function resetMaze(){
     mazeStream.stop();
-    mazeMap.reset();
+    mazeMap.reset();registeredMap.reset();lidarOffset=null;pendingCloud=null;
     if(tasks.prepared==='maze')tasks.prepared=null;
   }
-  function mazeHealthy(){
-    return connected&&Date.now()-statusAt<700&&Date.now()-mazeMap.at<850&&Date.now()-trajectory.at<600&&
-      mazeMap.generation===status.map_generation&&status.maze_protocol===2&&status.xy_planner==='navfn_pursuit'&&
-      status.dwa_ready===true&&status.sensors_ready===true&&status.feedback_fresh===true&&status.chassis_mode===1&&
-      status.chassis_errors===0&&[0,2].includes(status.remote_switch)&&status.mode!=='manual';
+  function mazeUnavailable(){
+    const now=Date.now();
+    if(!connected||now-statusAt>=700||status.feedback_fresh!==true)return 'feedback';
+    if(status.chassis_mode!==1||status.chassis_errors!==0||status.manual_block_reason==='chassis_fault'||
+       ![0,2].includes(status.remote_switch)||status.mode==='manual')return 'control';
+    if(status.maze_protocol!==2||status.xy_planner!=='navfn_pursuit')return 'controller';
+    if(!mazeMap.generation||mazeMap.generation!==status.map_generation)return 'map';
+    if(status.manual_block_reason==='lidar_unavailable')return 'lidar';
+    if(status.manual_block_reason==='odometry_unavailable'||now-trajectory.at>=600)return 'odometry';
+    if(now-mazeMap.at>=850||status.sensors_ready!==true)return 'perception';
+    if(status.dwa_ready!==true)return 'planner';
+    return '';
   }
+  const mazeHealthy=()=>!mazeUnavailable();
   const stopped=()=>connected && Date.now()-statusAt<500 && status.feedback_fresh===true &&
       [status.v,status.w,status.feedback_v,status.feedback_w].every(Number.isFinite)&&
       Math.abs(status.v)<0.001&&Math.abs(status.w)<0.001&&Math.abs(status.feedback_v)<0.02&&Math.abs(status.feedback_w)<0.02&&
@@ -86,7 +107,7 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         throw Error('请确认底盘处于 CAN 控制档，且遥控器已释放控制');
       const reuse=status.sensors_ready&&status.dwa_ready&&status.xy_planner==='navfn_pursuit'&&Boolean(status.map_generation);
       if(status.mode==='manual')send('auto');
-      mazeMap.reset();mazeSeen=Date.now();mazeStream.start();
+      mazeMap.reset();registeredMap.reset();pendingCloud=null;mazeSeen=Date.now();mazeStream.start();
       return reuse;
     },
     startMaze:(task,alive,options)=>{
@@ -95,7 +116,7 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         if(!Array.isArray(options.hint)||options.hint.length!==2)throw Error('搜索区需要前方和左侧两个坐标');
         mazeMap.goals({kind:'hint',id:options.mapId,x:options.hint[0],y:options.hint[1]});
       }
-      mission.start(task,alive);
+      mission.start(task,alive,Date.now(),status.stage==='FAULT'?status.reason:'');
     },
     ready:experiment=>experiment==='maze'?mazeHealthy():connected&&Date.now()-statusAt<1500&&status.sensors_ready===true&&status.feedback_fresh===true&&(experiment!=='lab3-xy'||status.dwa_enabled!==true||status.dwa_ready===true)});
   const room=new ControlRoom({leaseMs,connected:()=>connected,
@@ -116,11 +137,13 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         try { const value = JSON.parse(line); if (value && typeof value === 'object' && !Array.isArray(value)) {
           if(value.type==='cloud'){
             cloud={points:Array.isArray(value.points)?value.points.filter(point=>Array.isArray(point)&&point.length===3&&point.every(Number.isFinite)).slice(0,8000):[],frame:String(value.frame||'').replace(/^\//,'').slice(0,100),registered:value.registered===true,stamp:Number.isFinite(value.stamp)?value.stamp:null};cloudAt=Date.now();
-          }else if(value.type==='pose'){const epoch=trajectory.epoch;trajectory.add(value);if(epoch!==trajectory.epoch)resetMaze();}
+            pendingCloud=cloud.registered?cloud:null;registerPending();
+          }else if(value.type==='pose'){const epoch=trajectory.epoch;trajectory.add(value);if(epoch!==trajectory.epoch)resetMaze();else registerPending();}
           else if(value.type==='ack'){
             if(value.command==='manual'&&manualAck){const pending=manualAck;manualAck=null;clearTimeout(pending.timer);pending.resolve(value);}
           }
-          else{status = {...value,manual_block_message:MANUAL_ERRORS[value.manual_block_reason]||''}; statusAt = Date.now();tasks.observe(status);if(mazeMap.generation&&mazeMap.generation!==status.map_generation)resetMaze();}
+          else{status = {...value,manual_block_message:MANUAL_ERRORS[value.manual_block_reason]||''}; statusAt = Date.now();tasks.observe(status);
+            if(mazeMap.generation&&mazeMap.generation!==status.map_generation||registeredMap.generation&&registeredMap.generation!==status.map_generation)resetMaze();}
         } } catch {}
       }
     });
@@ -133,7 +156,8 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
     if(connected&&(Date.now()-mazeSeen<10000||tasks.task?.experiment==='maze'&&(tasks.busy||tasks.prepared==='maze')))mazeStream.start();
     else mazeStream.stop();
     if(mission.run){
-      mission.tick({status,statusAt,healthy:mazeHealthy(),stopped:stopped()});
+      const unavailable=mazeUnavailable();
+      mission.tick({status,statusAt,unavailable,healthy:!unavailable,stopped:stopped()});
       if(tasks.task?.phase==='failed')tasks.prepared=null;
     }
   },100);
@@ -164,10 +188,17 @@ function createConsole({ port = 8765, tcpPort = 18766, ping = null, sshRunner, l
         fs.createReadStream(path.join(simDir,file)).on('error',()=>res.destroy()).pipe(res);return;
       }
       if (req.url === '/api/experiments') return reply(res,200,{experiments:availableExperiments});
+      if(req.url==='/api/cloud-map'||req.url.startsWith('/api/cloud-map?')){
+        const q=new URL(req.url,origin).searchParams;mazeSeen=Date.now();
+        return reply(res,200,{...registeredMap.chunk(q.get('id'),Number(q.get('from')),Date.now(),Number(q.get('removed'))),connected});
+      }
       if(req.url==='/api/maze'||req.url.startsWith('/api/maze?')){
         const q=new URL(req.url,origin).searchParams;mazeSeen=Date.now();
+        const unavailable=mazeUnavailable();
+        const healthReason={feedback:'等待底盘反馈',control:'确认 CAN 控制档与遥控器开关',controller:'等待车端迷宫控制器',
+          map:'等待本轮地图',lidar:'等待车载雷达数据',odometry:'等待定位更新',perception:'等待雷达与定位配对',planner:'等待路径规划'}[unavailable]||'';
         return reply(res,200,{...mazeMap.snapshot(q.get('id'),Number(q.get('since'))||0),
-          streamError:mazeStream.error,healthy:mazeHealthy(),paused:mission.run?.paused||false,mode:mission.run?.mode||null});
+          streamError:mazeStream.error,healthy:!unavailable,healthReason,paused:mission.run?.paused||false,mode:mission.run?.mode||null});
       }
       if (req.url === '/api/session') {
         try{

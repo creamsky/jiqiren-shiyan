@@ -33,7 +33,9 @@ function* roamCandidate(map,now,heading,straightOnly=false){
     }
   }
   candidates.sort((a,b)=>b.score-a.score);
-  return candidates[0]||null;
+  // The search yields to telemetry between directions. Recheck the winning
+  // corridor against any observations received since it was first scored.
+  return candidates.find(candidate=>map.segmentClear(candidate.goal))||null;
 }
 
 function* roam(map,now,heading){

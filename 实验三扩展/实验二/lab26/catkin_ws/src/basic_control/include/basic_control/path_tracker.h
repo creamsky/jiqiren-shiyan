@@ -82,10 +82,13 @@ class PathTracker {
       state="path_braking";reason="Measured braking path obstructed";return {};
     }
     retreat_.setRays(rays);retreat_.observe(p,previous,actual,now);
+    const bool recovering=retreat_.phase()!=RouteRetreat::Phase::Idle;
     Command target;
     auto track=[&](ObstaclePoint carrot){
       const double dx=carrot.x-p.x,dy=carrot.y-p.y,range=std::hypot(dx,dy);
       const double angle=wrap(std::atan2(dy,dx)-p.yaw);
+      if(recovering && std::abs(wrap(p.yaw+angle-retreat_.failedHeading()))<.70 &&
+         !retreat_.formerApproachOpen(scan,p,goal.x,goal.y))return false;
       if(range>.025){
         const double k=std::abs(angle)<.08 && range*std::abs(std::sin(angle))<.025?0.:2.*std::sin(angle)/range;
         // Pivot when the tangent is far off-heading or an advance would cut
@@ -95,7 +98,8 @@ class PathTracker {
         const double needed=std::min(range,remaining-.12);
         const bool arc_fits=free>=needed-.001;
         if(std::abs(angle)>(pivoting_?.13:.53) || (!arc_fits && std::abs(angle)>.14)){
-          if(pivotClear(scan,angle) && bumperClearance(scan,angle)>=std::min(range,remaining-.12)){
+          if(pivotClear(scan,angle) && (bumperClearance(scan,angle)>=std::min(range,remaining-.12) ||
+             observedCorridor(scan,angle,.22,rays))){
             pivoting_=true;state="pivot_to_path";reason="Pivoting toward the planned route";
             if(std::abs(actual.v)<=.02)target.w=std::copysign(std::min(.55,std::sqrt(1.2*std::abs(angle))),angle);
             return true;
@@ -121,7 +125,20 @@ class PathTracker {
       const double dx=corner_.x-p.x,dy=corner_.y-p.y;
       if(!observedCorridor(scan,wrap(std::atan2(dy,dx)-p.yaw),std::hypot(dx,dy),rays))branch_=false;
     }
-    bool usable=branch_ && track(corner_);
+    auto release=[&](){
+      const double dx=p.x-release_start_.x,dy=p.y-release_start_.y,c=std::cos(release_start_.yaw),s=std::sin(release_start_.yaw);
+      const double left=release_length_-c*dx-s*dy;
+      if(left<=.02 || std::abs(-s*dx+c*dy)>.04 || std::abs(wrap(p.yaw-release_start_.yaw))>.08 ||
+         !observedCorridor(scan,0.,std::max(left,stoppingTravel(actual.v))+.08,rays)){
+        release_length_=0.;return false;
+      }
+      state="forward_escape";reason="Advancing straight to clear the rear turning envelope";
+      if(std::abs(actual.w)<=.03 && std::abs(previous.w)<=turn_acc*dt)
+        target={std::min(.18,std::sqrt(2.*acc*left)),0.};
+      return true;
+    };
+    bool usable=release_length_>0. && release();
+    if(!usable)usable=branch_ && track(corner_);
     if(branch_ && !usable)branch_=false;
     if(!usable && on_route)usable=track(routeTarget(route,p,look));
     const double join_range=std::min(remaining,1.7);
@@ -145,6 +162,55 @@ class PathTracker {
       if(branch_)usable=track(corner_);
     }
     if(usable && branch_ && target.v>0.)state="following_detour";
+    if(!usable && retreat_.phase()==RouteRetreat::Phase::Idle){
+      const auto aim=on_route?routeTarget(route,p,look):goal;
+      const double dx=aim.x-p.x,dy=aim.y-p.y;
+      const double x=dx*std::cos(p.yaw)+dy*std::sin(p.yaw);
+      const double y=-dx*std::sin(p.yaw)+dy*std::cos(p.yaw);
+      const double heading=std::atan2(y,x);
+      if(!on_route && std::abs(heading)>.12 && pivotClear(scan,heading) &&
+         observedCorridor(scan,heading,.22,rays)){
+        if(std::abs(actual.v)<=.02)target.w=std::copysign(std::min(.45,std::sqrt(1.2*std::abs(heading))),heading);
+        state="pivot_to_path";reason="Pivoting toward the planned route";pivoting_=true;usable=true;
+      }
+      // For a blocked pivot, look for the nearest observed stopping pose
+      // where the same turn and the beginning of its outgoing leg both fit.
+      for(double advance:{.16,.26,.40}){
+        if(usable)break;
+        if(!observedCorridor(scan,0.,advance+.08,rays))continue;
+        if(std::abs(heading)>.12){
+          if(pivotClear(scan,heading))break;
+          auto shifted=scan;
+          for(auto& point:shifted)point.x-=advance;
+          auto shifted_rays=rays;shifted_rays.x-=advance;
+          const double turn=std::atan2(y,x-advance);
+          if(!pivotClear(shifted,turn)||!observedCorridor(shifted,turn,.20,shifted_rays))continue;
+        }else if(on_route || bumperClearance(scan,0.)<.38 || x<advance+.10){
+          break;
+        }
+        const double reaction=acc*avoidance_reaction_time;
+        const double speed=std::min(.18,std::sqrt(reaction*reaction+2.*acc*advance)-reaction);
+        if(std::abs(actual.w)<=.03 && std::abs(previous.w)<=turn_acc*dt)target={speed,0.};
+        pivoting_=false;state="forward_escape";reason="";usable=true;break;
+      }
+    }
+    if(!usable && !recovering && stopped && bumperClearance(scan,pi)<.12){
+      release_length_=std::min(.26,bumperClearance(scan,0.)-.10);
+      release_start_=p;
+      if(release_length_>=.09)usable=release();
+      else release_length_=0.;
+    }
+    if(!usable && (stopped || recovering) && now>=escape_check_){
+      escape_check_=now+.20;
+      SideExit exit;
+      exit.setRays(rays);
+      if(exit.select(scan,p,goal.x,goal.y,now,recovering?retreat_.failedHeading():p.yaw,retreat_.triedAt(p))){
+        const double yaw=exit.heading();
+        corner_={p.x+exit.length()*std::cos(yaw),p.y+exit.length()*std::sin(yaw)};
+        branch_=track(corner_);
+        if(branch_){usable=true;retreat_.remember(p,yaw);}
+      }
+    }
     if(usable){
       // A restored forward path can terminate backing only at a stopped handover.
       if(retreat_.phase()!=RouteRetreat::Phase::Idle){
@@ -164,7 +230,10 @@ class PathTracker {
             retreat_.beginTurnSpace(p,actual,scan,goal.x,goal.y,now);
         }else if(retreat_.canContinue(p,scan))retreat_.resumeBacking(p,now);
       }
-      if(retreat_.phase()!=RouteRetreat::Phase::Backing)return {};
+      if(retreat_.phase()!=RouteRetreat::Phase::Backing){
+        if(*retreat_.reason())reason=retreat_.reason();
+        return {};
+      }
       target=retreat_.step(p,actual,scan,now);state="route_retreat";reason=retreat_.reason();
     }
     if(target.v==0. && target.w==0.)return {};
@@ -207,9 +276,12 @@ class PathTracker {
     return std::isfinite(best);
   }
   RouteRetreat retreat_;
+  Pose release_start_{};
+  double release_length_=0.;
   ObstaclePoint corner_{};
   bool branch_=false;
   double branch_check_=-1.;
+  double escape_check_=-1.;
   bool arrived_=false,pivoting_=false;
   double settled_=-1.,blocked_=-1.,retry_=0.;
 };

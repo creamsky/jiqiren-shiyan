@@ -6,6 +6,7 @@
 #include "basic_control/can_output.h"
 #include "basic_control/global_route_client.h"
 #include "basic_control/ground_returns.h"
+#include "basic_control/low_obstacles.h"
 #include "basic_control/clearing_rays.h"
 #include "basic_control/maze_guard.h"
 #include "basic_control/scan_alignment.h"
@@ -120,7 +121,7 @@ class Experiment {
           if(current!=master_id){bindRosIO();master_id=current;}
           if(nh.getParam("/lab26/map_generation",generation) && generation!=map_generation){
             map_generation=generation;pose_time=cloud_time=0;stable_count=0;clear_since=-1;
-            pending_scans.clear();scan_alignment.clear();avoid_points.clear();global_route->reset();path_tracker=lab26::PathTracker();
+            pending_scans.clear();scan_alignment.clear();low_obstacles.clear();avoid_points.clear();global_route->reset();path_tracker=lab26::PathTracker();
           }
         }
       }
@@ -154,6 +155,9 @@ class Experiment {
               motion->avoidance_previous=previous_cmd;
               motion->avoidance_feedback={feedback_v,feedback_w};
               if(use_global_route&&motion->cfg.xy_goal&&motion->stage==lab26::Stage::Driving){
+                low_obstacles.append(pose,motion->avoidance_points);
+                front_gap=lab26::bumperClearance(motion->avoidance_points,0.);
+                rear_gap=lab26::bumperClearance(motion->avoidance_points,lab26::pi);
                 const double dx=ray_pose.x-pose.x,dy=ray_pose.y-pose.y;
                 const double c=std::cos(pose.yaw),s=std::sin(pose.yaw);
                 const lab26::RayView rays{&near_plane_rays,c*dx+s*dy,-s*dx+c*dy,ray_pose.yaw-pose.yaw};
@@ -164,7 +168,7 @@ class Experiment {
                 motion->displacement=std::hypot(pose.x-motion->origin.x,pose.y-motion->origin.y);
                 motion->cross_track=-(pose.x-motion->origin.x)*std::sin(motion->origin.yaw)+(pose.y-motion->origin.y)*std::cos(motion->origin.yaw);
                 motion->progress=std::max(0.,motion->cfg.distance-motion->external_remaining);
-                if(path || motion->external_remaining<=.20 || motion->external_state=="settling_goal"){
+                if(path || global_route->ready() || motion->external_remaining<=.20 || motion->external_state=="settling_goal"){
                   static const lab26::Waypoints empty;
                   cmd=path_tracker.step(path?*path:empty,pose,goal,motion->avoidance_points,rays,
                     previous_cmd,{feedback_v,feedback_w},t,dt,linear_rate,angular_rate);
@@ -258,7 +262,7 @@ class Experiment {
           status_json.pop_back();status_json+=",\"avoidance_reason\":\""+motion->avoidanceReason()+"\",\"avoidance_replans\":"+std::to_string((use_global_route&&motion->cfg.xy_goal?int(global_route->replans):motion->avoidanceReplans()))+",\"goal_distance\":"+std::to_string(motion->avoidanceRemaining())+",\"avoidance_version\":6,\"last_can_tx_errno\":"+std::to_string(last_can_tx_errno)+",\"can_tx_retries\":"+std::to_string(can_tx_retries)+"}";
           status_json.pop_back();status_json+=std::string(",\"dwa_enabled\":")+(use_global_route?"true":"false")+",\"dwa_ready\":"+(global_route->ready()?"true":"false")+"}";
           status_json.pop_back();
-          status_json+=",\"maze_protocol\":2,\"maze_leg\":\""+maze_leg+"\"";
+          status_json+=",\"maze_protocol\":2,\"maze_height_observations\":true,\"maze_leg\":\""+maze_leg+"\"";
           status_json+=std::string(",\"xy_planner\":\"")+(use_global_route?"navfn_pursuit":"local_xy")+"\",\"xy_local_recovery\":false}";
           console->status(status_json);
         }
@@ -301,6 +305,7 @@ class Experiment {
   double last_console_seen=-1,console_started=now();
   double last_cloud_preview=-1;
   double last_world_cloud=-1,last_pose_preview=-1;
+  size_t world_preview_phase=0;
   lab26::Command manual_cmd;
   lab26::Command previous_cmd;
   int last_can_tx_errno=0;
@@ -317,15 +322,17 @@ class Experiment {
   std::vector<lab26::ObstaclePoint> avoid_points;
   lab26::Pose avoid_cloud_pose,ray_pose;
   lab26::ScanAlignment scan_alignment;
+  lab26::LowObstacles low_obstacles;
   std::deque<lab26::ObstacleScan> pending_scans;
   double latest_raw_start=-1.;
-  static void publishPoints(ros::Publisher& publisher,const std::vector<lab26::ObstaclePoint>& points,double stamp){
+  static void publishPoints(ros::Publisher& publisher,const std::vector<lab26::ObstaclePoint>& points,double stamp,
+                            const std::vector<lab26::TimedReturn>* measured=nullptr){
     sensor_msgs::PointCloud2 msg;msg.header.frame_id="body";msg.header.stamp.fromSec(stamp);
     sensor_msgs::PointCloud2Modifier modifier(msg);
     modifier.setPointCloud2FieldsByString(1,"xyz");modifier.resize(points.size());
     if(!points.empty()){
       sensor_msgs::PointCloud2Iterator<float> x(msg,"x"),y(msg,"y"),z(msg,"z");
-      for(auto p:points){*x=p.x;*y=p.y;*z=0.;++x;++y;++z;}
+      for(size_t i=0;i<points.size();++i){*x=points[i].x;*y=points[i].y;*z=measured?(*measured)[i].z:0.;++x;++y;++z;}
     }
     publisher.publish(msg);
   }
@@ -337,13 +344,14 @@ class Experiment {
       if(lab26::ScanAlignment::awaitingPose(end,pose_stamp))break;
       lab26::Pose reference;
       if(ros::Time::now().toSec()-end<.45 && scan_alignment.align(scan,aligned,&clearing,&reference)){
+        low_obstacles.update(scan,aligned,reference,scan_alignment.stillDuring(scan.start,end));
         marks.clear();
         for(size_t i=0;i<aligned.size();++i)if(scan.returns[i].mark)marks.push_back(aligned[i]);
         const double stamp=std::min(end,pose_stamp);
         publishPoints(clearing_pub,clearing,stamp);publishPoints(obstacle_pub,marks,stamp);
         // Navfn masks rear marks. The persistent maze map needs every observed
         // obstacle for checking turns and the path back from a dead end.
-        if(maze_obstacle_pub.getNumSubscribers())publishPoints(maze_obstacle_pub,aligned,stamp);
+        if(maze_obstacle_pub.getNumSubscribers())publishPoints(maze_obstacle_pub,aligned,stamp,&scan.returns);
         if(latest_raw_start==scan.start){
           avoid_points.swap(aligned);avoid_cloud_pose=reference;
           front_gap=lab26::bumperClearance(avoid_points,0.);rear_gap=lab26::bumperClearance(avoid_points,lab26::pi);
@@ -463,7 +471,7 @@ class Experiment {
        (pose_time>0 && std::hypot(next.x-previous.x,next.y-previous.y)>.15+plausible_speed*(t-pose_time))){
       if(pose_time>0 && msg->header.stamp.toSec()<pose_stamp)motion->stop("Odometry time reset");
       global_route->reset();path_tracker=lab26::PathTracker();
-      scan_alignment.clear();pending_scans.clear();
+      scan_alignment.clear();pending_scans.clear();low_obstacles.clear();avoid_points.clear();near_plane_rays={};cloud_time=0.;
     }
     pose_frame=next_frame;
     pose=next; previous=next; pose_time=t; pose_stamp=msg->header.stamp.toSec();
@@ -518,6 +526,7 @@ class Experiment {
         const bool outside_body=std::abs(*x)>lab26::body_half_length||std::abs(*y)>lab26::body_half_width;
         const bool obstacle=ground.obstacle(*x,*y,*z);
         if(use_global_route && outside_body){
+          if(*z<-.14 && std::hypot(*x,*y)<8.)scan.lower_rays.push_back({{*x,*y},point_time,false,*z});
           next_rays.add(*x,*y,*z);
           clearing.add(*x,*y,*z,point_time,obstacle);
         }
@@ -529,7 +538,7 @@ class Experiment {
           const double range=6.0;
           if(r<range)next_points.push_back({*x,*y});
           if(use_global_route && r<range)
-            scan.returns.push_back({{*x,*y},point_time,*x>=-lab26::body_half_length});
+            scan.returns.push_back({{*x,*y},point_time,*x>=-lab26::body_half_length,*z});
         }
         if(!in_band)continue; // Preserve the sector indicators of the other experiments.
         if(r>0.45&&r<1.0) ++turn_count;
@@ -574,10 +583,11 @@ class Experiment {
     last_world_cloud=now();
     if(!console||!console->canPreview()||now()-last_cloud_preview<.065)return;
     std::ostringstream out;out<<std::fixed<<std::setprecision(6)<<"{\"type\":\"cloud\",\"registered\":true,\"frame\":\""<<safeFrame(msg->header.frame_id)<<"\",\"stamp\":"<<msg->header.stamp.toSec()<<std::setprecision(3)<<",\"points\":[";
-    const size_t stride=std::max<size_t>(1,(size_t(msg->width)*msg->height+1599)/1600);size_t index=0,count=0;
+    const size_t stride=std::max<size_t>(1,(size_t(msg->width)*msg->height+1599)/1600);
+    const size_t phase=world_preview_phase++%stride;size_t index=0,count=0;
     try {
       sensor_msgs::PointCloud2ConstIterator<float> x(*msg,"x"),y(*msg,"y"),z(*msg,"z");
-      for(;x!=x.end();++x,++y,++z){if(index++%stride||!std::isfinite(*x)||!std::isfinite(*y)||!std::isfinite(*z))continue;if(count++)out<<',';out<<'['<<*x<<','<<*y<<','<<*z<<']';}
+      for(;x!=x.end();++x,++y,++z){if(index++%stride!=phase||!std::isfinite(*x)||!std::isfinite(*y)||!std::isfinite(*z))continue;if(count++)out<<',';out<<'['<<*x<<','<<*y<<','<<*z<<']';}
       out<<"]}";console->status(out.str());last_cloud_preview=now();
     }catch(const std::runtime_error& e){ROS_WARN_THROTTLE(2,"Invalid registered cloud: %s",e.what());}
   }

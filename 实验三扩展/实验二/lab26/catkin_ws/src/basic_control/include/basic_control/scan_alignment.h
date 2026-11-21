@@ -4,11 +4,12 @@
 
 namespace lab26 {
 struct TimedPose { double stamp; Pose pose; };
-struct TimedReturn { ObstaclePoint point; double offset; bool mark=true; };
+struct TimedReturn { ObstaclePoint point; double offset; bool mark=true; double z=0.; };
 struct ObstacleScan {
   double start=0, duration=0;
   std::vector<TimedReturn> returns;
   std::vector<TimedReturn> clearing;
+  std::vector<TimedReturn> lower_rays;
 };
 
 class ScanAlignment {
@@ -16,6 +17,12 @@ class ScanAlignment {
   // FAST-LIO and the lidar driver can round the end of the same scan differently.
   static bool awaitingPose(double scan_end,double pose_stamp){return scan_end-pose_stamp>.0001;}
   void clear(){poses.clear();}
+  bool stillDuring(double start,double end)const{
+    const Pose ref=at(start);
+    const auto near=[&](Pose p){return std::hypot(p.x-ref.x,p.y-ref.y)<.008 && std::abs(wrap(p.yaw-ref.yaw))<.01;};
+    for(const auto& sample:poses)if(sample.stamp>start && sample.stamp<end && !near(sample.pose))return false;
+    return near(at(end));
+  }
   void append(double stamp,Pose p){
     if(!poses.empty() && stamp==poses.back().stamp)return;
     if(!poses.empty() && (stamp<poses.back().stamp || stamp-poses.back().stamp>.25))clear();

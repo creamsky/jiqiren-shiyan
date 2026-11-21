@@ -36,8 +36,9 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
     if(!peer||peer.destroyed)return;
     stamp+=.06;
     peer.write(JSON.stringify({...baseStatus,map_generation:generation})+'\n'+
-      JSON.stringify({type:'pose',pose,frame:'camera_init',stamp})+'\n');
-    if(streaming)accept({generation,frame:'camera_init',stamp:stamp-.06,pose,rays,marks:[]});
+      JSON.stringify({type:'pose',pose,position:[.05,.05,0],quaternion:[0,0,0,1],frame:'camera_init',stamp})+'\n'+
+      JSON.stringify({type:'cloud',registered:true,frame:'camera_init',stamp,points:[[1.05,.05,.25],[2.05,.05,.6]]})+'\n');
+    if(streaming)accept({generation,frame:'camera_init',stamp:stamp-.06,pose,rays,marks:[],lidarOffset:[0,0,.28]});
   },60);
   const base='http://127.0.0.1:'+port;
   const get=async url=>(await fetch(base+url)).json();
@@ -53,12 +54,27 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
     }
     let initial=await until(async()=>{const m=await get('/api/maze');return m.healthy&&m;});
     assert.ok(initial.tiles.length);
+    for(const [status,reason] of [
+      [{dwa_ready:false},'等待路径规划'],
+      [{sensors_ready:false,manual_block_reason:'lidar_unavailable'},'等待车载雷达数据'],
+      [{sensors_ready:false,manual_block_reason:'odometry_unavailable'},'等待定位更新']
+    ]){
+      Object.assign(baseStatus,status);
+      const waiting=await until(async()=>{const m=await get('/api/maze');return m.healthReason===reason&&m;});
+      assert.equal(waiting.healthy,false);assert.equal(waiting.id,initial.id);
+      Object.assign(baseStatus,{dwa_ready:true,sensors_ready:true,manual_block_reason:''});
+    }
+    await until(async()=>(await get('/api/maze')).healthy);
     await until(async()=>!(await get('/api/status')).room.stopping);
     const claim=await post('/api/command',{command:'claim'});assert.equal(claim.code,200);lease=claim.data.room.lease;
+    const cloud=await until(async()=>{const v=await get('/api/cloud-map');return v.active>0&&v;});
+    assert.equal(cloud.frame,'camera_init');assert.equal(cloud.registered,true);
+    assert.equal((await get('/api/cloud-map?id='+cloud.id+'&from='+cloud.end)).xyz,'');
     const start=(options={})=>post('/api/command',{command:'start',experiment:'maze',options});
     assert.equal((await start()).code,200);
     await until(async()=>(await get('/api/status')).preparedExperiment==='maze');
     const prepared=await get('/api/maze');assert.notEqual(prepared.id,initial.id);initial=prepared;
+    assert.notEqual((await get('/api/cloud-map')).id,cloud.id);
     assert.equal(remotePreparations,0,'healthy live sensors must be reused');
     assert.ok(!commands.some(c=>c.startsWith('startmaze ')));
     assert.equal((await post('/api/maze/goal',{kind:'exit',x:1,y:0,id:initial.id},guest)).code,409);

@@ -12,7 +12,7 @@ constexpr double avoidance_linear_deceleration=0.2;
 // Assignment Figure 4.1: 650 x 550 mm, with the lidar centered on the body.
 constexpr double body_half_length=0.325,body_half_width=0.275;
 constexpr double body_length_margin=0.01,body_width_margin=0.015;
-struct ObstaclePoint { double x,y; };
+struct ObstaclePoint { double x,y; bool remembered=false; };
 // Each endpoint is clipped to the part of a real ray lying within 10 cm
 // of the lidar plane. These observations describe coverage, not obstacles.
 struct NearPlaneRays {
@@ -65,7 +65,7 @@ inline bool observedCorridor(const std::vector<ObstaclePoint>& scan,double angle
     const double along=c*point.x+s*point.y,lateral=-s*point.x+c*point.y;
     if(along<=0.)continue;
     if(along<=far && std::abs(lateral)<=width)return false;
-    if(along<=far)continue;
+    if(along<=far || point.remembered)continue;
     cover(lateral*far/along);
   }
   if(coverage!=31u && rays.scan){

@@ -147,6 +147,7 @@ async function switchToSimulation(event){
 document.querySelectorAll('[data-target="simulation"]').forEach(link=>link.addEventListener('click',switchToSimulation));
 document.addEventListener('control-suspend',suspend);
 const labels={WAITING:'等待任务',TURNING:'原地转向',DRIVING:'直线行驶',DONE:'任务完成',FAULT:'故障停车',PAUSED:'已暂停',IDLE:'待命'};
+let lastTaskView='';
 async function refresh(){
   try{
     const response=await fetch('/api/status',{headers:{'X-Control-Token':token},signal:AbortSignal.timeout(1000)});if(!response.ok)throw Error('状态读取失败');const data=await response.json();
@@ -162,7 +163,12 @@ async function refresh(){
     if(data.robotIp)document.querySelector('.address').textContent=data.robotIp;
     if(data.preview)$('previewBadge').hidden=false;
     applyRoom(data.room);
-    if(!mine&&data.task)window.Workbench.syncTask?.(data.task);
+    if(data.task&&window.Workbench.items().length){
+      const key=data.task.experiment+'/'+data.task.phase;
+      const active=['preparing','running','stopping'].includes(data.task.phase);
+      if(active||key!==lastTaskView)window.Workbench.syncTask?.(data.task);
+      lastTaskView=key;
+    }
     if(!online){mine=false;zero();}
     const state=data.status;manual=state.mode==='manual'&&armed;vectorSupported=state.manual_vector===true;
     window.NavigationMap?.(state.map_generation,data.task?.phase==='preparing');
@@ -250,7 +256,7 @@ async function refresh(){
     $('stop').disabled=!online&&!taskActive;
     window.RoomUI?.render(data.room,online,data.urls);
     if(switching){document.querySelectorAll('[data-command],[data-direction],#zero,#claim,#connectHardware').forEach(button=>button.disabled=true);message(switchHint);}
-  }catch{online=false;mine=false;armed=false;zero();$('connection').textContent='服务连接中断';document.querySelectorAll('[data-command],[data-direction],#stop,#zero,#claim').forEach(b=>b.disabled=true);window.RoomUI?.render(roomState,false);}
+  }catch{online=false;mine=false;armed=false;zero();$('connection').textContent='服务连接中断';document.querySelectorAll('[data-command],[data-direction],#stop,#zero,#claim').forEach(b=>b.disabled=true);window.MazeView?.status({},false,false);window.RoomUI?.render(roomState,false);}
 }
 setInterval(async()=>{
   if(busy||switching||!mine||!online||document.hidden||!document.hasFocus())return;

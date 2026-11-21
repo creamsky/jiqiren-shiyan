@@ -10,6 +10,7 @@ class SideExit {
   Phase phase() const { return phase_; }
   void setRays(RayView rays){rays_=rays;}
   double heading() const { return heading_; }
+  double length() const { return length_; }
   bool straight() const { return straight_; }
   // Recheck the next section before reaching the end of a straight escape.
   // A changing goal bearing, a corner or lost coverage ends the extension.

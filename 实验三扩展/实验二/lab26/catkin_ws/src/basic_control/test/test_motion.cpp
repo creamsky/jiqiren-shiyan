@@ -8,6 +8,7 @@
 #include "basic_control/scan_alignment.h"
 #include "basic_control/path_tracker.h"
 #include "basic_control/ground_returns.h"
+#include "basic_control/low_obstacles.h"
 #include "basic_control/clearing_rays.h"
 #include "basic_control/maze_guard.h"
 #include <iostream>
@@ -231,6 +232,23 @@ void testGlobalRouteTracking(){
   PathTracker detour;NearPlaneRays observed;
   for(int i=0;i<360;++i){const double a=pi*i/180.;observed.add(4*std::cos(a),4*std::sin(a),0);}
   PathTracker empty_map;
+  NearPlaneRays short_view;
+  for(int i=0;i<360;++i){const double a=pi*i/180.;short_view.add(.85*std::cos(a),.85*std::sin(a),0.);}
+  const RayView short_rays{&short_view,0,0,0};
+  PathTracker startup;
+  auto launch=startup.step({}, {},{4.,0},{},short_rays,{},{},.02,.02,.2,.6);
+  require(launch.v>0 && launch.w==0,"Start in a short fully observed forward corridor");
+  launch=startup.step({}, {},{0.,3.},{},short_rays,{},{},.04,.02,.2,.6);
+  require(launch.v==0 && launch.w>0,"Pivot into a short observed opening from rest");
+  for(double side:{-1.,1.}){
+    PathTracker shift;
+    launch=shift.step({}, {},{0.,3.*side},{{-.33,0}},short_rays,{},{},.02,.02,.2,.6);
+    require(launch.v>0 && launch.w==0,"Advance to verified pivot space when the rear bumper blocks rotation");
+    launch=shift.step({}, {},{0.,3.*side},{{-.33,0},{.34,0}},short_rays,{},{},.04,.02,.2,.6);
+    require(launch.v==0 && launch.w==0,"A newly blocked nose vetoes the staging advance");
+    launch=shift.step({}, {.16,0,0},{0.,3.*side},{{-.49,0}},short_rays,{},{},.06,.02,.2,.6);
+    require(launch.v==0 && launch.w*side>0,"Start turning as soon as the rear has cleared");
+  }
   const auto first=empty_map.step({}, {},{7.,0},{{-.33,0}},{&observed,0,0,0},{},{},.2,.02,.2,.6);
   require(first.v>0. && first.w==0,"An empty global path can follow a verified local prefix toward a distant goal");
   const auto blind=empty_map.step({}, {},{7.,0},{{-.33,0}},{},{},{},.3,.02,.2,.6);
@@ -240,11 +258,70 @@ void testGlobalRouteTracking(){
   require(bypass.v==0 && std::abs(bypass.w)>0,"Choose a footprint-clear observed detour when the global path still points into a new post");
   PathTracker sealed;Waypoints wall;
   for(double y=-3.;y<=3.;y+=.03)wall.push_back({.54,y});
-  const auto wait=sealed.step(path,{},path.back(),wall,{&observed,0,0,0},{},{},3,.02,.2,.6);
-  require(wait.v==0 && wait.w==0,"A side opening with no collision-free connection across the wall is not a route");
+  const auto escape=sealed.step(path,{},path.back(),wall,{&observed,0,0,0},{},{},3,.02,.2,.6);
+  require(escape.v==0 && std::abs(escape.w)>0,"Turn along a measured side opening before the full way around the wall is visible");
+  Pose moving;Command last=escape;
+  for(int i=1;i<=230;++i){
+    const auto scan=lab3::reframe(wall,{},{moving.x,moving.y,moving.yaw});
+    const auto next=sealed.step(path,moving,path.back(),scan,{&observed,0,0,0},last,last,3.+i*.02,.02,.2,.6);
+    require(!sweptFootprint(scan,next.v,next.w).blocked,"Escape commands must clear the wall");
+    moving.x+=next.v*std::cos(moving.yaw)*.02;moving.y+=next.v*std::sin(moving.yaw)*.02;moving.yaw+=next.w*.02;
+    last=next;
+  }
+  require(std::abs(moving.y)>.14,"The escape must translate into the opening after pivoting");
+  PathTracker boxed;
+  // The body fits straight ahead but cannot turn between parallel edges yet.
+  Waypoints narrow{{-.33,0},{1.13,0}};
+  for(double x=-.60;x<1.0;x+=.04){narrow.push_back({x,.31});narrow.push_back({x,-.31});}
+  PathTracker release;
+  Pose released;
+  Command prior;
+  for(int i=0;i<45;++i){
+    auto live=lab3::reframe(narrow,{},{released.x,0,0});
+    if(i%2)live.erase(live.begin()); // intermittent tail return
+    const auto cmd=release.step({{0,0},{0,2}},released,{0,2},live,{&observed,0,0,0},prior,prior,i*.02,.02,.2,.6);
+    require(cmd.v>0 && cmd.w==0 && !sweptFootprint(live,cmd.v,0).blocked,
+            "Continue a verified straight release when the turn stays blocked and the rear return flickers");
+    released.x+=cmd.v*.02;prior=cmd;
+  }
+  require(released.x>.06,"The straight release must produce measurable progress");
+  const auto stop_release=release.step(path,released,{0,2},{{.34,0}},short_rays,prior,prior,1.,.02,.2,.6);
+  require(!stop_release.v && !stop_release.w,"A new obstacle stops a committed straight release");
+  PathTracker dead_end;
+  Pose back;Command sent;
+  for(int i=0;i<=100;++i){
+    back.x=i*.01;
+    sent=dead_end.step({{back.x,0},{3,0}},back,{3,0},{},{&observed},sent,{.15,0},i*.05,.05,.2,.6);
+  }
+  sent={};
+  for(int i=0;i<190;++i){
+    Waypoints blocked{{1.46-back.x,0}};
+    for(double x=-.6;x<=1.5;x+=.04){blocked.push_back({x,.31});blocked.push_back({x,-.31});}
+    const auto cmd=dead_end.step({{back.x,0},{3,0}},back,{3,0},blocked,{&observed},sent,sent,5.05+i*.02,.02,.2,.6);
+    require(cmd.v<=0,"A short clear prefix during retrace must not send the robot back into the same dead end");
+    back.x+=cmd.v*.02;sent=cmd;
+  }
+  require(back.x<.75,"Retrace measured positions past the first reopened path prefix");
+  const auto wait=boxed.step(path,{},path.back(),{{.33,0},{-.33,0},{0,.28},{0,-.28}},{&observed,0,0,0},{},{},3,.02,.2,.6);
+  require(wait.v==0 && wait.w==0,"Stay stopped when every swept exit is blocked");
 }
 int main() {
   using namespace lab26;
+  LowObstacles low;
+  ObstacleScan frame;frame.start=1.;frame.returns={{{1.,0},0.,true,-.40}};
+  low.update(frame,{{1.,0}},{},true);
+  Pose near{.60,0,0};
+  frame.returns.clear();frame.lower_rays={{{2.,0},0.,false,-.45}};
+  for(int i=2;i<6;++i){frame.start=i;low.update(frame,{},near,true);}
+  Waypoints kept;low.append(near,kept);
+  require(kept.size()==1 && sweptFootprint(kept,.2,0).blocked,
+          "Low obstacle stays in the braking sweep beneath a passing high beam");
+  for(auto& pt:kept)require(pt.remembered,"Remembered marks cannot supply fresh corridor coverage");
+  frame.lower_rays={{{1.,0},0.,false,-1.}};frame.start=6.;low.update(frame,{},near,true);
+  low.update(frame,{},near,true);kept.clear();low.append(near,kept);
+  require(kept.size()==1,"Duplicate clearing scan cannot erase a low obstacle");
+  frame.start=7.;low.update(frame,{},near,true);kept.clear();low.append(near,kept);
+  require(kept.empty(),"Two rays through the actual height remove a departed obstacle");
   testGlobalRouteTracking();
   testRetreat();
   testLongRetreat(false);testLongRetreat(true);testRecheckDuringTurn();

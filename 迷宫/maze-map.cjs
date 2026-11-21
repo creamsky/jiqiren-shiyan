@@ -26,7 +26,7 @@ class MazeMap {
     this.version=0;this.pose=null;this.origin=null;this.stamp=0;this.at=0;this.coverage=null;
     this.trail=[];this.visits=new Map();this.lastVisit='';this.hint=null;this.exit=null;
     this.blocked=new Map();this.leg=null;this.route=[];this.note='等待配准雷达与定位';
-    this.tentative=new Map();
+    this.evidence=new Map();this.retired=0;this.nearReturns=[];
   }
   tile(ix,iy,create=false){
     const tx=Math.floor(ix/TILE),ty=Math.floor(iy/TILE),id=key(tx,ty);
@@ -43,9 +43,9 @@ class MazeMap {
   mark(x,y,state){
     const tile=this.tile(x,y,true),i=this.offset(x,y);
     if(state===2){
-      const id=key(x,y),seen=this.tentative.get(id);
-      if(tile.data[i]!==2)this.tentative.set(id,{x,y,hit:this.version,miss:0,lastMiss:-1});
-      else if(seen&&seen.hit!==this.version)this.tentative.delete(id);
+      const id=key(x,y),seen=this.evidence.get(id);
+      if(!seen)this.evidence.set(id,{hit:this.version,hits:1,first:this.stamp,last:this.stamp,miss:0,lastMiss:-1,levels:new Map()});
+      else if(seen.hit!==this.version){seen.hit=this.version;seen.hits++;seen.last=this.stamp;seen.miss=0;}
     }
     if(tile.data[i]>=state)return;
     tile.data[i]=state;tile.revision=this.version;
@@ -58,14 +58,15 @@ class MazeMap {
       if(cm<near.distance[j]){near.distance[j]=cm;if(cm<=BASE_EXTENSION*100)near.revision=this.version;}
     }
   }
-  clearTentative(x,y){
-    const id=key(x,y),p=this.tentative.get(id);
-    // Two separate hits confirm a stationary obstacle for the generation. A single
-    // hit needs eight later, distinct free observations before it can be forgotten.
+  observeFree(x,y){
+    const p=this.evidence.get(key(x,y));
     if(!p||p.hit===this.version||p.lastMiss===this.version)return;
     p.lastMiss=this.version;
-    if(++p.miss<8)return;
-    this.tentative.delete(id);
+    p.miss++;
+  }
+  forget(x,y){
+    if(this.retired>=4)return;
+    this.retired++;this.evidence.delete(key(x,y));
     const t=this.tile(x,y);t.data[this.offset(x,y)]=1;t.revision=this.version;
     for(const d of neighbors){
       const i=x+d.x,j=y+d.y,near=this.tile(i,j),offset=this.offset(i,j);
@@ -75,11 +76,28 @@ class MazeMap {
       if(d.cm<=BASE_EXTENSION*100&&next>BASE_EXTENSION*100)near.revision=this.version;
     }
   }
+  heightRay(px,py,z,dx,dy,dz){
+    const range=Math.hypot(dx,dy);if(range<.7)return;
+    const ux=dx/range,uy=dy/range;
+    for(let d=.35;d<range-.22;d+=CELL*.75){
+      const x=index(px+d*ux),y=index(py+d*uy),p=this.evidence.get(key(x,y));
+      if(!p||!p.levels.size||p.lastMiss!==this.version||p.hit===this.version)continue;
+      const vx=center(x)-px,vy=center(y)-py,along=vx*ux+vy*uy;
+      if(Math.abs(vx*uy-vy*ux)>.055||along>=range-.22)continue;
+      const realHeight=z+dz*along/range;
+      for(const level of p.levels.values())if(level.frame!==this.version&&Math.abs(realHeight-level.z)<=.055){
+        level.frame=this.version;level.misses++;
+      }
+      const sustained=p.hits>=4&&p.last-p.first>=1.2,needed=sustained?12:6;
+      if(p.miss>=needed&&this.stamp-p.last>=(sustained?2.4:1.2)&&
+         [...p.levels.values()].every(level=>level.misses>=needed))this.forget(x,y);
+    }
+  }
   ray(x,y,ex,ey){
     const dx=Math.abs(ex-x),dy=-Math.abs(ey-y),sx=x<ex?1:-1,sy=y<ey?1:-1;
     let err=dx+dy;
     while(true){
-      if(this.value(x,y)===2){this.clearTentative(x,y);break;}
+      if(this.value(x,y)===2){if(Math.hypot(ex-x,ey-y)*CELL>.18)this.observeFree(x,y);break;}
       this.mark(x,y,1);
       if(x===ex&&y===ey)break;
       const twice=2*err;
@@ -90,18 +108,37 @@ class MazeMap {
   accept(scan,now=Date.now()){
     if(!scan||typeof scan!=='object')return false;
     const {generation,frame,pose,marks,rays,stamp}=scan;
-    if(!generation||typeof generation!=='string'||frame!=='camera_init'||!Number.isFinite(stamp)||
+    if(typeof generation!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(generation)||frame!=='camera_init'||!Number.isFinite(stamp)||
        !Array.isArray(pose)||pose.length!==3||!pose.every(Number.isFinite)||
        ![marks,rays].every(a=>Array.isArray(a)&&a.length<=15000&&a.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.hypot(...p)<=6.01)))return false;
+    const heights=scan.heightHits||[];
+    const rayOrigin=scan.rayOrigin||pose.slice(0,2);
+    if(!Array.isArray(rayOrigin)||rayOrigin.length!==2||!rayOrigin.every(Number.isFinite)||distance(rayOrigin,pose)>2)return false;
+    if(!Array.isArray(heights)||heights.length>15000||heights.length&&(!Number.isFinite(scan.sensorZ)||
+       !heights.every(p=>Array.isArray(p)&&p.length===3&&p.every(Number.isFinite)&&Math.hypot(p[0],p[1])<=6.01)))return false;
     if(this.generation!==generation)this.reset();
     if(stamp<=this.stamp)return false;
     this.generation=generation;this.frame=frame;this.stamp=stamp;this.at=now;this.version++;
-    this.coverage=scan.coverage||null;
+    this.coverage=scan.coverage||null;this.retired=0;
     this.pose=pose.slice();this.origin??=pose.slice();
     const [px,py,yaw]=pose,c=Math.cos(yaw),s=Math.sin(yaw),ix=index(px),iy=index(py);
     const project=([x,y])=>[index(px+c*x-s*y),index(py+s*x+c*y)];
+    this.nearReturns=[];
+    const displayStride=Math.max(1,Math.ceil(heights.length/768));
+    for(let i=this.version%displayStride;i<heights.length;i+=displayStride){
+      const [x,y,z]=heights[i];this.nearReturns.push([rayOrigin[0]+c*x-s*y,rayOrigin[1]+s*x+c*y,scan.sensorZ+z]);
+    }
     for(const p of marks)this.mark(...project(p),2);
+    for(const p of heights){
+      const x=index(rayOrigin[0]+c*p[0]-s*p[1]),y=index(rayOrigin[1]+s*p[0]+c*p[1]);this.mark(x,y,2);
+      const h=scan.sensorZ+p[2],levels=this.evidence.get(key(x,y)).levels;
+      levels.set(Math.floor(h/.08),{z:h,misses:0,frame:this.version});
+    }
     for(const p of rays)this.ray(ix,iy,...project(p));
+    const stride=Math.max(1,Math.ceil(heights.length/320));
+    for(let i=this.version%stride;i<heights.length;i+=stride){
+      const [x,y,dz]=heights[i];this.heightRay(rayOrigin[0],rayOrigin[1],scan.sensorZ,c*x-s*y,s*x+c*y,dz);
+    }
     this.mark(ix,iy,1);
     if(!this.trail.length||distance(this.trail.at(-1),pose)>.18)this.trail.push(pose.slice(0,2));
     const visit=this.visitKey(px,py);
@@ -248,7 +285,7 @@ class MazeMap {
     return {id:this.id,generation:this.generation,revision:this.version,cell:CELL,tile:TILE,baseExtension:BASE_EXTENSION,
       ageMs:this.at?Date.now()-this.at:null,pose:this.pose,origin:this.origin,hint:this.hint,exit:this.exit,
       coverage:this.coverage,departureClear:this.pose?this.footprintClear(...this.pose):null,
-      trail:this.trail,route:this.route,leg:this.leg,note:this.note,tiles};
+      trail:this.trail,route:this.route,leg:this.leg,note:this.note,nearReturns:this.nearReturns,tiles};
   }
 }
 module.exports={MazeMap,CELL,BASE_EXTENSION,distance};

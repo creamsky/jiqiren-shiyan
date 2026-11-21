@@ -3,7 +3,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const {MazeMap,CELL,distance}=require('./maze-map.cjs');
 const {MazeMission}=require('./mission.cjs');
-const {roam}=require('./roam.cjs');
+const {roam,roamCandidate}=require('./roam.cjs');
 
 function scene(){
   const map=new MazeMap();
@@ -33,20 +33,21 @@ test('rays are transformed at their own pose, stop at returns, and tiles disting
   assert.deepEqual(map.snapshot(snap.id,snap.revision).tiles,[]);
   assert.equal(map.accept(scan),false);
   assert.equal(map.accept({...scan,stamp:2,marks:[[NaN,0]]}),false);
+  assert.equal(map.accept({...scan,stamp:2,generation:'b\nstart'}),false);
   targets(map,'hint',3,0);assert.ok(distance(map.hint,[.05,3.05])<1e-8);
   assert.ok(map.accept({...scan,generation:'b',stamp:2}));assert.notEqual(map.id,snap.id);
   assert.equal(map.hint,null);assert.throws(()=>map.goals({kind:'exit',x:0,y:0,id:snap.id}),/地图已更新/);
 });
 
-test('a one-frame outlier needs independent clearing scans, confirmed cones survive blind or higher rays',()=>{
+test('horizontal-only observations never clear an obstacle of unknown height, even a single return',()=>{
   const map=scene();
   const sample={frame:'camera_init',generation:map.generation,pose:map.pose,marks:[],rays:Array(19).fill([1.8,0])};
   map.accept({...sample,stamp:2,marks:[[1,0],[1,.4]]});
   for(let i=3;i<=9;i++)map.accept({...sample,stamp:i,marks:[[1,.4]]});
   assert.equal(map.value(10,0),2);
   map.accept({...sample,stamp:10,marks:[[1,.4]]});
-  assert.equal(map.value(10,0),1);
-  assert.ok(map.clearance(10,0)>.30&&map.clearance(10,0)<.48);
+  assert.equal(map.value(10,0),2);
+  assert.equal(map.clearance(10,0),0);
   for(let i=11;i<22;i++)map.accept({...sample,stamp:i,rays:[[1.8,.72]]});
   assert.equal(map.value(10,4),2);
 });
@@ -61,6 +62,19 @@ test('unknown exits, unobserved footprint corners and passages narrower than the
   assert.equal(map.segmentClear([1.5,.05]),false);
   const wide=scene();rectangle(wide,-10,30,-10,10);wide.mark(9,7,2);wide.mark(9,-7,2);
   assert.ok(wide.segmentClear([1.5,.05]));
+});
+
+test('confirmed obstacle columns clear only with repeated free observations through every measured height',()=>{
+  const map=scene();let n=2;
+  function observe(hits,rays){
+    map.accept({frame:'camera_init',generation:map.generation,stamp:n++*.4+2,pose:map.pose,
+      sensorZ:.5,marks:hits.map(([x,y])=>[x,y]),rays,heightHits:hits});
+  }
+  for(let i=0;i<5;i++)observe([[1,0,0],[1,0,-.2]],[]);
+  for(let i=0;i<15;i++)observe([[2,0,0]],[[2,0]]);
+  assert.equal(map.value(10,0),2,'an upper beam cannot clear the lower part of a cone');
+  for(let i=0;i<16;i++)observe([[2,0,-.4]],[[2,0]]);
+  assert.equal(map.value(10,0),1,'both old surfaces were traversed after the object left');
 });
 
 test('long designated exit uses bounded legs and an occupied shortcut cannot cross a wall',()=>{
@@ -120,6 +134,35 @@ test('stalled leg parks and fences its replacement until a fresh zero-speed stop
   s.ctx.statusAt=15802;s.mission.tick(s.ctx,15803);assert.ok(!s.mission.run.needsStop);
 });
 
+test('the maze supervisor leaves a stopped start to the controller and still aborts an unsafe moving sweep',()=>{
+  const s=supervisor(),leg=firstLeg(s);
+  Object.assign(s.status,{stage:'WAITING',reason:'',maze_leg:leg.id});
+  s.ctx.stopped=false;s.ctx.statusAt=2100;
+  s.map.mark(4,3,2);
+  assert.equal(s.map.brakingClear(0,0),false);
+  s.mission.tick(s.ctx,2101);
+  assert.equal(s.mission.run.leg,leg);
+  assert.ok(!s.sent.includes('stop'));
+  s.status.stage='DRIVING';s.status.v=.12;s.ctx.statusAt=2200;
+  s.mission.tick(s.ctx,2201);
+  assert.equal(s.sent.at(-1),'stop');
+  assert.ok(s.map.blocked.size);
+});
+
+test('measured retracing can keep a maze leg alive while distance to the goal increases',()=>{
+  const s=supervisor(),leg=firstLeg(s);
+  Object.assign(s.status,{stage:'DRIVING',maze_leg:leg.id,avoidance_state:'route_retreat',v:-.08,feedback_v:-.08});
+  s.ctx.stopped=false;
+  for(let i=1;i<=18;i++){
+    s.map.pose=[.05-i*.042,.05,0];s.ctx.statusAt=1000+i*1000;
+    s.mission.tick(s.ctx,s.ctx.statusAt+1);
+  }
+  assert.equal(s.mission.run.leg,leg);
+  assert.ok(!s.sent.includes('stop'));
+  s.ctx.statusAt=34000;s.mission.tick(s.ctx,34001);
+  assert.equal(s.sent.at(-1),'stop','A retreat that no longer moves must release the leg');
+});
+
 test('map resets, stale perception, lease loss and unconfirmed commands all terminate motion',()=>{
   for(const cause of ['map','sensor','lease','ack']){
     const s=supervisor();firstLeg(s);
@@ -130,6 +173,24 @@ test('map resets, stale perception, lease loss and unconfirmed commands all term
     assert.equal(s.mission.run,null,cause);assert.equal(s.sent.at(-1),'stop',cause);
     assert.ok(['failed','stopped'].includes(s.task.phase));
   }
+});
+
+test('an explicit restart can clear a recovered old takeover while a new takeover always ends the leg',()=>{
+  const s=supervisor(),old='Chassis fault or control-mode change';
+  s.status.reason=old;s.mission.start(s.task,()=>true,1000,old);
+  const leg=firstLeg(s);s.status.maze_leg=leg.id;s.status.stage='DRIVING';s.status.reason='';
+  s.ctx.stopped=false;s.ctx.statusAt=2100;s.mission.tick(s.ctx,2101);
+  s.status.stage='FAULT';s.status.reason=old;s.ctx.statusAt=2200;s.mission.tick(s.ctx,2201);
+  assert.equal(s.task.phase,'failed');assert.equal(s.sent.at(-1),'stop');
+});
+
+test('retargeting an already finished leg accepts the native latched DONE only when paused and stationary',()=>{
+  const s=supervisor();firstLeg(s);s.mission.retarget(2000);
+  s.status.stage='DONE';s.ctx.statusAt=2150;s.status.paused=false;s.mission.tick(s.ctx,2150);
+  assert.ok(s.mission.run.needsStop);
+  s.status.paused=true;s.ctx.stopped=false;s.mission.tick(s.ctx,2200);
+  assert.ok(s.mission.run.needsStop);
+  s.ctx.stopped=true;s.mission.tick(s.ctx,2300);assert.ok(!s.mission.run.needsStop);
 });
 
 test('roaming favors a clear forward corridor, chooses a side when blocked, and respects an explicit exit',()=>{
@@ -152,6 +213,51 @@ test('a close side return from the parked robot blocks departure without declari
   assert.equal(s.map.snapshot('',0).departureClear,false);
   assert.ok(!s.sent.some(c=>c.startsWith('startmaze ')));
   assert.equal(s.task.phase,'running');assert.match(s.task.log,/净距/);
+});
+
+test('a fresh obstacle arriving midway through a roaming search vetoes a previously clear forward candidate',()=>{
+  const map=scene();rectangle(map,-25,30,-26,26);
+  const work=roamCandidate(map,1000,0);
+  work.next();work.next();
+  map.mark(9,0,2);
+  let step;do{step=work.next();}while(!step.done);
+  assert.ok(step.value);assert.ok(map.segmentClear(step.value.goal));assert.ok(Math.abs(step.value.angle)>.4);
+});
+
+test('brief planner loss stops immediately, then waits for stable data and stopped feedback before replanning',()=>{
+  const s=supervisor();const leg=firstLeg(s);
+  Object.assign(s.status,{stage:'DRIVING',maze_leg:leg.id});s.ctx.healthy=false;s.ctx.unavailable='planner';s.ctx.stopped=false;
+  s.mission.tick(s.ctx,2100);assert.equal(s.sent.at(-1),'stop');assert.equal(s.task.phase,'running');
+  s.ctx.healthy=true;s.ctx.unavailable='';s.ctx.statusAt=2300;s.ctx.stopped=true;
+  Object.assign(s.status,{stage:'FAULT',reason:'Operator stop',paused:true});s.mission.tick(s.ctx,2300);
+  s.mission.tick(s.ctx,2900);assert.ok(s.mission.run.recovery);
+  s.ctx.statusAt=3100;s.mission.tick(s.ctx,3100);assert.ok(!s.mission.run.recovery);
+  assert.equal(s.mission.run.leg,null);
+  s.ctx.healthy=false;s.ctx.unavailable='control';s.mission.tick(s.ctx,3120);assert.equal(s.task.phase,'failed');
+});
+
+test('a lidar gap keeps the exit, but never overrides an operator pause',()=>{
+  const s=supervisor(),leg=firstLeg(s);
+  targets(s.map,'exit',2.2,.05);
+  const mapId=s.map.id;
+  Object.assign(s.status,{stage:'FAULT',reason:'Lidar timeout',maze_leg:leg.id,paused:false});
+  s.ctx.stopped=false;s.ctx.statusAt=2100;
+  s.mission.tick(s.ctx,2101);
+  assert.match(s.task.log,/雷达暂时中断/);
+  assert.equal(s.sent.at(-1),'stop');
+  s.mission.pause(2250);
+  s.status.paused=true;s.ctx.stopped=true;s.ctx.statusAt=2400;
+  s.mission.tick(s.ctx,2401);s.ctx.statusAt=3200;s.mission.tick(s.ctx,3201);
+  assert.ok(s.mission.run.paused);
+  assert.equal(s.mission.run.recovery,null);
+  assert.equal(s.map.id,mapId);
+  assert.deepEqual(s.map.exit,[2.2,.05]);
+  const starts=s.sent.filter(c=>c.startsWith('startmaze ')).length;
+  s.mission.tick(s.ctx,3300);
+  assert.equal(s.sent.filter(c=>c.startsWith('startmaze ')).length,starts);
+  s.mission.resume();
+  for(let now=3400;now<=3500&&!s.mission.run.leg;now+=10)s.mission.tick(s.ctx,now);
+  assert.ok(s.mission.run.leg);
 });
 
 test('roaming renews a straight leg while moving, and rejects renewal across an unobserved turn',()=>{
