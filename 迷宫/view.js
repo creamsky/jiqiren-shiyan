@@ -132,7 +132,10 @@ window.MazeView=(()=>{
         roam_pivot_obstacle:'转动范围内有障碍',roam_braking_obstacle:'制动范围内有障碍',
         roam_pivot_unobserved:'等待读取转动范围内的雷达回波',roam_return_blocked:'回溯通道暂不可通行',
         roam_rear_blocked:'后方无法安全倒车',roam_settle_pivot:'减速准备转向',
-        roam_forward_unobserved:'前方观测不足',roam_no_passage:'未发现可通行方向',roam_wait:'等待可通行方向'};
+        roam_forward_unobserved:'前方观测不足',roam_no_passage:'未发现可通行方向',roam_wait:'等待可通行方向',
+        roam_short_advance:'沿已确认的短通道直行',roam_lane_unobserved:'前方车宽范围内的观测不足',
+        roam_short_clearance:'短通道制动余量不足',roam_near_memory:'记忆中的近障限制前进，等待可用侧路',
+        roam_near_return:'前方有近距回波，等待可用侧路'};
       el('progressLabel').textContent='行驶状态';
       el('progress').textContent=running?(paused?'已暂停':actions[feedback.avoidance_state]||'检查通道'):'待命';
       el('total').textContent='自主漫游';

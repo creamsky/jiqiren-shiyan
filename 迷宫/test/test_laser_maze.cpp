@@ -218,6 +218,67 @@ void testReturnDetour(){
     require(next.v>0.&&std::string(planner.state)=="roam_backtrack","Rejoin measured return route");
   }
 }
+void testConePassingMargin(){
+  using namespace lab26;
+  for(int side:{-1,1}){
+    GapRoam planner;Pose p{};Command cmd{};
+    double margin=1.;int stops=0;
+    for(int tick=0;tick<600&&p.x<2.2;tick++){
+      NearPlaneRays rays;std::vector<ObstaclePoint> points;
+      const double c=std::cos(p.yaw),s=std::sin(p.yaw);
+      for(int degree=-180;degree<180;degree++){
+        const double a=degree*pi/180.,dx=std::cos(a+p.yaw),dy=std::sin(a+p.yaw);
+        double near=3.;
+        auto plane=[&](double t,double coord,double low,double high){
+          if(t>0.&&coord>=low&&coord<=high)near=std::min(near,t);
+        };
+        if(std::abs(dy)>1e-8){
+          for(double wall:{-.68,.68}){double t=(wall-p.y)/dy;plane(t,p.x+t*dx,-4.,8.);}
+          for(double edge:{side*.293,side*.533}){double t=(edge-p.y)/dy;plane(t,p.x+t*dx,1.20,1.44);}
+        }
+        if(std::abs(dx)>1e-8)for(double edge:{1.20,1.44}){
+          const double t=(edge-p.x)/dx;plane(t,side*(p.y+t*dy),.293,.533);
+        }
+        const double x=near*std::cos(a),y=near*std::sin(a);
+        rays.add(x,y,0.);if(near<3.)points.push_back({x,y});
+      }
+      for(int i=0;i<=24;i++){
+        const double dx=1.20+i*.01-p.x,dy=side*.293-p.y;
+        const double x=c*dx+s*dy,y=c*dy-s*dx;
+        if(std::abs(x)<=body_half_length)margin=std::min(margin,std::abs(y)-body_half_width);
+      }
+      rays.received_at=1+tick*.02;
+      cmd=planner.step(p,points,{&rays,0,0,0},cmd,cmd,rays.received_at,.02,.18);
+      if(cmd.v==0.&&cmd.w==0.)++stops;
+      p.x+=.02*cmd.v*c;p.y+=.02*cmd.v*s;p.yaw+=.02*cmd.w;
+    }
+    std::cout<<"Cone side "<<side<<" passing gap "<<margin<<" m, stops "<<stops<<" end x "<<p.x<<std::endl;
+    require(p.x>=2.2&&margin>=.045&&stops==0,"Steer away early from a cone grazing an otherwise clear lane");
+  }
+}
+void testShortForwardObservation(){
+  using namespace lab26;
+  GapRoam planner;NearPlaneRays rays;Command cmd{};
+  const RayView view{&rays,0,0,0};
+  // One return almost two metres beyond the bumper, but a complete
+  // width of ray evidence only for the immediately usable prefix.
+  const std::vector<ObstaclePoint> points={{2.25,0.},{-.62,0.}};
+  for(int deg=-36;deg<=36;deg++)rays.add(.55,.55*std::tan(deg*pi/180.),0.);
+  for(int i=0;i<30;i++){
+    rays.received_at=1+i*.02;
+    cmd=planner.step({},points,view,cmd,cmd,1+i*.02,.02,.18);
+    require(cmd.v>0.&&cmd.w==0.,"Use a verified straight braking lane when no long passage or rear lane is observed");
+  }
+  auto stop=planner.step({},{{.50,0.}},view,cmd,cmd,1.60,.02,.18);
+  require(stop.v==0.&&stop.w==0.,"A new obstacle vetoes short advance immediately");
+  stop=planner.step({},{{.56,0.,true}},view,cmd,cmd,1.62,.02,.18);
+  require(stop.v==0.&&stop.w==0.,"A remembered low obstacle vetoes the calibrated braking sweep");
+  stop=planner.step({},points,view,cmd,cmd,2.,.02,.18);
+  require(stop.v==0.&&stop.w==0.,"A stale scan cannot authorize short advance");
+  GapRoam blind;NearPlaneRays pencil;pencil.add(2.25,0.,0.);
+  cmd=blind.step({},points,{&pencil,0,0,0},{},{},2,.02,.18);
+  require(cmd.v==0.&&cmd.w==0.,"A distant central ray alone cannot clear the chassis width");
+}
 void testAngledReturnAisle(){
   using namespace lab26;
   for(int side:{-1,1}){
@@ -244,5 +305,5 @@ int main(int argc,char** argv){
     const int variant=std::atoi(argv[1]),scene=std::atoi(argv[2]);
     testLaserMaze(scene==1,scene==1,true,scene==2,variant);return 0;
   }
-  testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
+  testConePassingMargin();testShortForwardObservation();testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
   testLaserMaze(false,false,true);testLaserMaze(true,true,true);testLaserMaze(false,false,true,true);}

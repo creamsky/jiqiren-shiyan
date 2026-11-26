@@ -169,6 +169,14 @@ class Experiment {
                 const lab26::RayView rays{&near_plane_rays,c*dx+s*dy,-s*dx+c*dy,ray_pose.yaw-pose.yaw};
                 cmd=gap_roam.step(pose,motion->avoidance_points,rays,{feedback_v,feedback_w},previous_cmd,t,dt,maze_extension);
                 motion->external_navigation=true;motion->external_state=gap_roam.state;
+                motion->external_reason.clear();
+                if(cmd.v==0.&&cmd.w==0.&&(ticks+1)%5==0){
+                  const auto& hits=motion->avoidance_points;
+                  motion->external_reason="fused_front_m="+std::to_string(lab26::bumperClearance(hits,0.))+
+                      " fused_rear_m="+std::to_string(lab26::bumperClearance(hits,lab26::pi))+
+                      " forward_20cm="+std::to_string(lab26::observedCorridor(hits,0.,.20,rays))+
+                      " rear_20cm="+std::to_string(lab26::observedCorridor(hits,lab26::pi,.20,rays));
+                }
               }else if(use_global_route&&motion->cfg.xy_goal&&motion->stage==lab26::Stage::Driving){
                 low_obstacles.append(pose,motion->avoidance_points);
                 front_gap=lab26::bumperClearance(motion->avoidance_points,0.);

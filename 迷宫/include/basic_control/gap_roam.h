@@ -131,6 +131,9 @@ class GapRoam {
   bool turning_=false,backing_=false,chosen_=false,rolling_turn_=false;
   bool backtracking_=false,dead_end_turn_=false,explored_=false;
   bool detouring_=false;
+  bool short_advance_=false;
+  bool steering_clear_=false;
+  const char* no_lane_="roam_no_passage";
   Pose detour_start_{};
   double detour_scan_yaw_=0.;
   Pose coverage_origin_{};
@@ -140,6 +143,22 @@ class GapRoam {
   PassageMemory memory_;
   double cruise_=.30;
   static double angle(double x){return std::atan2(std::sin(x),std::cos(x));}
+  // Fit a small heading correction between the two flanks. In a narrow,
+  // symmetric gate neither flank has room for a correction.
+  static double passingCorrection(const std::vector<ObstaclePoint>& points,double bearing){
+    const double c=std::cos(bearing),s=std::sin(bearing);
+    const double width=body_half_width+.055;
+    double left=.14,right=.14;
+    for(const auto& p:points){
+      const double x=c*p.x+s*p.y,y=-s*p.x+c*p.y;
+      if(x<body_half_length||x>1.35||std::abs(y)>width+.22)continue;
+      double& room=y>0.?left:right;
+      room=std::min(room,(std::abs(y)-width)/x);
+    }
+    if(left<0.&&right>0.)return -std::atan(std::min(-left,right));
+    if(right<0.&&left>0.)return std::atan(std::min(-right,left));
+    return 0.;
+  }
   // Estimate the corridor midpoint at several distances along the chosen
   // passage. A single cone or a missing flank is not a pair of walls.
   static double corridorBearing(const std::vector<ObstaclePoint>& scan,double bearing){
@@ -283,14 +302,19 @@ class GapRoam {
       next_scan_=t+.25;chosen_=false;
       constexpr int bins=24;
       std::array<double,bins> depth{};
+      double forwardClearance=0.;
+      bool rememberedLimit=false;
       for(int i=0;i<bins;i++){
         const double a=i*2*pi/bins,c=std::cos(a),s=std::sin(a);
         double clearance=2.;
         for(const auto& p:points){
           const double along=c*p.x+s*p.y;
-          if(along>0.&&std::abs(-s*p.x+c*p.y)<=body_half_width)
-            clearance=std::min(clearance,along-body_half_length);
+          if(along>0.&&std::abs(-s*p.x+c*p.y)<=body_half_width&&along-body_half_length<clearance){
+            clearance=along-body_half_length;
+            if(i==0)rememberedLimit=p.remembered;
+          }
         }
+        if(i==0)forwardClearance=clearance;
         if(clearance<.55)continue; // Leave turning room at a known wall.
         for(double length:{1.75,1.15,.75,.50,.25})if(clearance>=length&&seenLane(points,a,length,rays)){
           depth[i]=length;break;
@@ -381,11 +405,17 @@ class GapRoam {
         const double bearing=std::abs(centre-pi)>.08&&seenLane(points,centre,.50,rays)?centre:pi;
         heading_=pose.yaw+bearing;chosen_=turning_=dead_end_turn_=true;
       }
+      steering_clear_=false;
       if(chosen_&&!turning_){
         const double bearing=angle(heading_-pose.yaw);
         const double centered=corridorBearing(points,bearing);
         if(centered!=bearing&&seenLane(points,centered,.40,rays))
           heading_=pose.yaw+centered;
+        const double planned=angle(heading_-pose.yaw);
+        const double correction=passingCorrection(points,planned);
+        if(std::abs(correction)>.005&&seenLane(points,planned+correction,.55,rays)){
+          heading_+=correction;steering_clear_=true;
+        }
       }
       // Actual braking uses .25 s reaction and .20 m/s² deceleration.
       // Validate the observed prefix for each speed, from cruise down.
@@ -401,6 +431,14 @@ class GapRoam {
       if(!chosen_&&!backing_&&(!backtracking_||std::abs(angle(route-pose.yaw-pi))<.65)&&seenLane(points,pi,.20,rays)){
         backing_=true;back_start_=pose;
       }
+      // A turn or long lane may be unobservable while the next straight
+      // stopping distance is fully visible. Use this only as a last resort
+      // and never creep towards an already known close barrier.
+      short_advance_=!chosen_&&!backing_&&forwardClearance>=.55&&cruise_>0.&&
+        (!backtracking_||!routed||std::cos(route-pose.yaw)>.25);
+      if(short_advance_)cruise_=std::min(.18,cruise_);
+      no_lane_=forwardClearance<.55?(rememberedLimit?"roam_near_memory":"roam_near_return"):
+        cruise_==0.?"roam_lane_unobserved":"roam_no_passage";
     }
     Command desired{};
     if(backing_){
@@ -464,10 +502,20 @@ class GapRoam {
         if(measured.v<-.02)return hold("roam_settle_forward");
         desired.v=cruise_;desired.w=std::max(-.38,std::min(.38,delta));
         state=detouring_?"roam_return_detour":backtracking_?"roam_backtrack":"roam_forward";
-        if(std::abs(delta)<.08)desired.w=0.;
+        if(std::abs(delta)<(steering_clear_?.005:.08))desired.w=0.;
       }
-    }else return hold(explored_?"roam_explored":backtracking_?"roam_return_blocked":"roam_no_passage");
+    }else if(short_advance_&&!explored_){
+      const double speed=std::max(std::abs(measured.v),std::max(previous.v,cruise_));
+      const double travel=.04+.25*speed+speed*speed/.40;
+      if(rays.scan->received_at<0.||t-rays.scan->received_at>.30||rays.scan->received_at>t+.02||
+         !observedCorridor(points,0.,travel,rays))return hold("roam_lane_unobserved");
+      if(previous.w!=0.||std::abs(measured.w)>.02||previous.v<0.||measured.v<-.02)
+        return hold("roam_settle_forward");
+      desired.v=cruise_;state="roam_short_advance";
+    }else return hold(explored_?"roam_explored":backtracking_?"roam_return_blocked":no_lane_);
     const auto cmd=rateLimit(desired,previous,dt,.20,.60);
+    if(short_advance_&&(!mazeBrakeClear(points,measured,coneAllowance)||!mazeBrakeClear(points,cmd,coneAllowance)))
+      return hold("roam_short_clearance");
     if(!brakeClear(points,cmd))return hold("roam_braking_obstacle");
     return cmd;
   }
