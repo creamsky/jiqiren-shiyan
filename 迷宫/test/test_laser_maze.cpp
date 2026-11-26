@@ -210,6 +210,94 @@ void testReturnDetour(){
     for(int i=0;i<360;i++)rays.add(2*std::cos(i*pi/180.),2*std::sin(i*pi/180.),0.);
     auto blocked=planner.step(p,{{0,.35},{-.45,0}},{&rays,0,0,0},{},{},4.3,.02,.18);
     require(blocked.v==0.&&blocked.w==0.,"New cone interrupts the half-finished turn");
+    {
+      auto turn=planner;Pose local=p;Command cmd{};
+      bool facedRoute=false;
+      const double startX=local.x;
+      for(int tick=0;tick<950&&startX-local.x<.06;tick++){
+        NearPlaneRays sight;std::vector<ObstaclePoint> walls;
+        const double now=4.8+.02*tick;sight.received_at=now;
+        for(int degree=-180;degree<180;degree++){
+          const double a=degree*pi/180.,world=a+local.yaw;
+          const double c=std::cos(world),s=std::sin(world);
+          const double tx=std::abs(c)<1e-8?10.:(std::copysign(.72,c)-(local.x-startX))/c;
+          const double ty=std::abs(s)<1e-8?10.:(std::copysign(.72,s)-(local.y-p.y))/s;
+          const double range=std::min(tx,ty),x=range*std::cos(a),y=range*std::sin(a);
+          sight.add(x,y,0.);walls.push_back({x,y});
+        }
+        cmd=turn.step(local,walls,{&sight,0,0,0},cmd,cmd,now,.02,.18);
+        if(tick==0){
+          require(side*cmd.w>0.,"Turn toward a short visible side return when there is room to pivot");
+          auto guard=turn;walls.push_back({.47,0.});
+          const auto stop=guard.step(local,walls,{&sight,0,0,0},cmd,cmd,now+.02,.02,.18);
+          require(stop.v==0.&&stop.w==0.,"A new cone inside the calibrated turn disk cancels the short-lane pivot");
+        }
+        facedRoute=facedRoute||std::abs(wrap(local.yaw-pi))<.18;
+        local.x+=.02*cmd.v*std::cos(local.yaw);local.y+=.02*cmd.v*std::sin(local.yaw);local.yaw+=.02*cmd.w;
+      }
+      require(facedRoute&&startX-local.x>=.06,"Face the return lane and make progress without a long straight candidate");
+    }
+    {
+      GapRoam reverse=planner;Pose noseAway=p;noseAway.yaw=0.;Command cmd{};
+      const double startX=noseAway.x;
+      for(int tick=0;tick<200&&startX-noseAway.x<.22;tick++){
+        const double now=4.8+.02*tick;
+        NearPlaneRays sight;sight.received_at=now;
+        // Both ends of the aisle are visible; the missing side sector
+        // prevents a pivot. The actual graph hop is behind the car.
+        for(int deg=-180;deg<180;deg++)if(deg<65||deg>105)
+          sight.add(2.*std::cos(deg*pi/180.),2.*std::sin(deg*pi/180.),0.);
+        cmd=reverse.step(noseAway,{},{&sight,0,0,0},cmd,cmd,now,.02,.18);
+        require(cmd.v<0.&&cmd.w==0.,"Follow a visible rear graph edge in reverse before taking a forward detour");
+        noseAway.x+=.02*cmd.v;
+      }
+      require(startX-noseAway.x>=.22,"Maintain reverse along the rear route across replans");
+    }
+    // At a right angle to the graph edge the vehicle can translate first,
+    // then turn once it clears the cone behind the opposite bumper.
+    for(int sign:{1,-1}){
+      GapRoam boxed=planner;Pose local=p;Command cmd{};double travel=0.;
+      for(int tick=0;tick<200&&travel<.07;tick++){
+        const double now=4.6+.02*tick;
+        NearPlaneRays localRays;localRays.received_at=now;
+        std::vector<ObstaclePoint> nearby;
+        for(int deg=-180;deg<180;deg++){
+          const double a=deg*pi/180.,c=std::cos(a),s=std::sin(a);
+          const double range=.69/std::max(std::abs(c),std::abs(s));
+          const double x=range*c-sign*travel,y=range*s;
+          localRays.add(x,y,0.);nearby.push_back({x,y});
+        }
+        nearby.push_back({-sign*(.35+travel),0.,true});
+        cmd=boxed.step(local,nearby,{&localRays,0,0,0},cmd,cmd,now,.02,.18);
+        require(sign*cmd.v>0.&&cmd.w==0.,"Use a short observed forward or rear lane transverse to the graph edge");
+        auto probe=boxed;
+        auto stale=probe.step(local,nearby,{&localRays,0,0,0},cmd,cmd,now+.31,.02,.18);
+        require(stale.v==0.&&stale.w==0.,"Old rays cannot authorize return repositioning");
+        nearby.push_back({sign*.48,0.,true});
+        auto guard=boxed;
+        auto veto=guard.step(local,nearby,{&localRays,0,0,0},cmd,cmd,now+.005,.02,.18);
+        require(veto.v==0.&&veto.w==0.,"A new near obstacle vetoes the next repositioning command");
+        travel+=sign*.02*cmd.v;local.x+=.02*cmd.v*std::cos(local.yaw);local.y+=.02*cmd.v*std::sin(local.yaw);
+      }
+      require(travel>=.07,"Make measured progress instead of repeatedly reporting a blocked route");
+      // The next full scan reveals the side aisle from the new position.
+      // Resume the graph route without resetting the planner or run.
+      bool rejoined=false;
+      for(int tick=0;tick<500&&!rejoined;tick++){
+        NearPlaneRays exit;std::vector<ObstaclePoint> aisle;
+        for(int degree=-180;degree<180;degree++){
+          const double a=degree*pi/180.;
+          const bool open=std::abs(wrap(local.yaw+a-pi))<.70;
+          const double r=open?3.:.72,x=r*std::cos(a),y=r*std::sin(a);
+          exit.add(x,y,0.);if(!open)aisle.push_back({x,y});
+        }
+        const double now=10.+.02*tick;exit.received_at=now;
+        cmd=boxed.step(local,aisle,{&exit,0,0,0},cmd,cmd,now,.02,.18);
+        local.x+=.02*cmd.v*std::cos(local.yaw);local.y+=.02*cmd.v*std::sin(local.yaw);local.yaw+=.02*cmd.w;
+        rejoined=cmd.v>0.&&std::abs(wrap(local.yaw-pi))<.25&&std::string(boxed.state)=="roam_backtrack";
+      }
+      require(rejoined,"Automatically rejoin the observed return aisle after moving forward or backward for clearance");
+    }
     auto next=scan(side*.18,4.6);
     require(next.v>0.&&std::string(planner.state)=="roam_return_detour","An observed bypass after an interrupted U-turn permits forward progress");
     require(planner.step(p,{{.325,0}},{&rays,0,0,0},next,next,4.62,.02,.18).v==0.,"An obstacle on the bypass still stops the car immediately");
