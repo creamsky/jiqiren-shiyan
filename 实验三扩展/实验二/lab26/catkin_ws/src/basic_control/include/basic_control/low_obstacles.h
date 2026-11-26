@@ -18,7 +18,9 @@ class LowObstacles {
       const auto q=aligned[i];const double z=scan.returns[i].z;
       if(z>=-.14 || std::hypot(q.x,q.y)>3.)continue;
       const double x=pose.x+c*q.x-s*q.y,y=pose.y+s*q.x+c*q.y;
-      cells_[std::make_tuple(int(std::floor(x/.04)),int(std::floor(y/.04)),int(std::floor(z/.04)))]={x,y,z,scan.start,0};
+      auto& cell=cells_[std::make_tuple(int(std::floor(x/.04)),int(std::floor(y/.04)),int(std::floor(z/.04)))];
+      if(cell.seen>=0.&&scan.start>cell.seen&&scan.start-cell.seen<=.40)cell.confirmed=true;
+      cell.x=x;cell.y=y;cell.z=z;cell.seen=scan.start;cell.misses=0;
     }
     std::array<std::vector<Beam>,360> beams;
     if(still)for(const auto& ray:scan.lower_rays){
@@ -41,16 +43,18 @@ class LowObstacles {
       ++it;
     }
   }
-  void append(Pose pose,std::vector<ObstaclePoint>& points)const{
+  void append(Pose pose,std::vector<ObstaclePoint>& points,bool requireRepeat=false)const{
     const double c=std::cos(pose.yaw),s=std::sin(pose.yaw);
     for(const auto& entry:cells_){
-      const auto& cell=entry.second;const double dx=cell.x-pose.x,dy=cell.y-pose.y;
+      const auto& cell=entry.second;
+      if(requireRepeat&&!cell.confirmed&&last_stamp_-cell.seen>.40)continue;
+      const double dx=cell.x-pose.x,dy=cell.y-pose.y;
       points.push_back({c*dx+s*dy,-s*dx+c*dy,true});
     }
   }
  private:
   struct Beam{double angle,range,slope;};
-  struct Cell{double x,y,z,seen;int misses;};
+  struct Cell{double x=0.,y=0.,z=0.,seen=-1.;int misses=0;bool confirmed=false;};
   static int bin(double angle){return std::min(359,std::max(0,int((angle+pi)*180./pi)));}
   std::map<std::tuple<int,int,int>,Cell> cells_;
   double last_stamp_=-1.;

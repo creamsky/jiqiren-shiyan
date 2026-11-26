@@ -259,15 +259,16 @@ class GapRoam {
       // keep that bumper in the calibrated braking sweep as well.
       std::vector<ObstaclePoint> sweep;
       for(const auto& p:points)
-        if(measured.w!=0.||sign*measured.v<0.||sign*p.x>=-body_half_length-body_length_margin)
+        if(measured.w!=0.||sign*measured.v<0.||sign*p.x>=-body_half_length)
           sweep.push_back(p);
       const auto cmd=rateLimit({sign*.12,0.},previous,dt,.20,.60);
       if(!mazeBrakeClear(sweep,measured,extension)||!mazeBrakeClear(sweep,{sign*.12,0.},extension)||
          !mazeBrakeClear(sweep,cmd,extension)||!brakeClear(points,cmd))continue;
-      state=sign==1?"roam_return_forward":"roam_return_reverse";
+      if(backtracking_)state=sign==1?"roam_return_forward":"roam_return_reverse";
+      else state=sign==1?"roam_probe_forward":"roam_probe_reverse";
       return cmd;
     }
-    return hold("roam_return_blocked");
+    return hold(backtracking_?"roam_return_blocked":no_lane_);
   }
   static bool pivotObserved(RayView rays,double extra=0.){
     const double radius=std::hypot(body_half_length,body_half_width)+extra;
@@ -426,13 +427,32 @@ class GapRoam {
       // A short side opening can still accommodate the next braking
       // distance. Face it before translating, with the entire calibrated
       // turning disk observed and clear. Keep the target through the turn.
-      const bool shortTurn=!chosen_&&!backing_&&!reverseHop&&backtracking_&&routed&&
-        std::abs(angle(route-pose.yaw))>.40&&rays.scan->received_at>=0.&&
+      bool shortTurn=false;
+      if(!chosen_&&!backing_&&!reverseHop&&rays.scan->received_at>=0.&&
         t-rays.scan->received_at<=.30&&rays.scan->received_at<=t+.02&&
         !pivotObstacle(points,coneAllowance+body_width_margin)&&
-        pivotObserved(rays,coneAllowance+body_width_margin)&&
-        observedCorridor(points,angle(route-pose.yaw),.20,rays);
-      if(shortTurn){chosen_=true;heading_=route;}
+        pivotObserved(rays,coneAllowance+body_width_margin)){
+        if(backtracking_&&routed){
+          shortTurn=std::abs(angle(route-pose.yaw))>.40&&observedCorridor(points,angle(route-pose.yaw),.20,rays);
+          if(shortTurn)heading_=route;
+        }else{
+          // Prefer straight travel on ties. Only turn for a materially
+          // longer verified prefix; score left and right identically.
+          double bestReach=0.;
+          for(int i=0;i<bins;i++){
+            const double a=angle(i*2*pi/bins);
+            for(double reach:{.50,.40,.30,.20}){
+              const double score=reach+.04*std::cos(a);
+              if(score<=bestReach)break;
+              if(!observedCorridor(points,a,reach,rays))continue;
+              if(i==0)bestReach=score+.055;
+              else if(std::abs(a)>.40){bestReach=score;heading_=pose.yaw+a;shortTurn=true;}
+              break;
+            }
+          }
+        }
+      }
+      if(shortTurn)chosen_=true;
       short_return_turn_=shortTurn;
       if(!backing_&&!backtracking_&&std::all_of(depth.begin(),depth.end(),[](double d){return d>=1.15;})){
         // In an observed open area there is no junction to resolve.
@@ -521,7 +541,7 @@ class GapRoam {
         const double remaining=std::max(0.,std::abs(delta)-.04-.18*toward);
         const double speed=std::min(.52,std::sqrt(2.*.60*remaining));
         desired.w=std::copysign(speed,std::abs(delta)>pi/2?turn_sign_:delta);
-        state=dead_end_turn_?"roam_uturn":"pivot_to_path";
+        state=dead_end_turn_?"roam_uturn":short_return_turn_&&!backtracking_?"roam_probe_turn":"pivot_to_path";
         // A translating turn can sweep farther than a stationary pivot. Bound
         // its entire braking arc by the corner radius plus centre travel.
         const double entrySpeed=std::max(std::abs(measured.v),std::abs(previous.v));
@@ -571,7 +591,9 @@ class GapRoam {
       if(previous.w!=0.||std::abs(measured.w)>.02||previous.v<0.||measured.v<-.02)
         return hold("roam_settle_forward");
       desired.v=cruise_;state="roam_short_advance";
-    }else return hold(explored_?"roam_explored":backtracking_?"roam_return_blocked":no_lane_);
+    }else if(!explored_){
+      return reposition(points,rays,measured,previous,t,dt,coneAllowance,1);
+    }else return hold("roam_explored");
     const auto cmd=rateLimit(desired,previous,dt,.20,.60);
     if(short_advance_&&(!mazeBrakeClear(points,measured,coneAllowance)||!mazeBrakeClear(points,cmd,coneAllowance)))
       return hold("roam_short_clearance");

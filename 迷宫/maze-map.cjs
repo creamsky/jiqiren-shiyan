@@ -128,7 +128,12 @@ class MazeMap {
     for(let i=this.version%displayStride;i<heights.length;i+=displayStride){
       const [x,y,z]=heights[i];this.nearReturns.push([rayOrigin[0]+c*x-s*y,rayOrigin[1]+s*x+c*y,scan.sensorZ+z]);
     }
-    for(const p of marks)this.mark(...project(p),2);
+    // Full calibrated frames supply the same obstacles in gravity-aligned
+    // coordinates below. Marking raw XY too can leave a second, heightless
+    // occupied cell when the chassis tilts or the sensor origin is offset.
+    const calibrated=scan.coverage==='full'&&heights.length>0&&
+      Array.isArray(scan.lidarOffset)&&scan.lidarOffset.length===3&&scan.lidarOffset.every(Number.isFinite);
+    if(!calibrated)for(const p of marks)this.mark(...project(p),2);
     for(const p of heights){
       const x=index(rayOrigin[0]+c*p[0]-s*p[1]),y=index(rayOrigin[1]+s*p[0]+c*p[1]);this.mark(x,y,2);
       const h=scan.sensorZ+p[2],levels=this.evidence.get(key(x,y)).levels;

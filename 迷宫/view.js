@@ -133,10 +133,12 @@ window.MazeView=(()=>{
         roam_pivot_unobserved:'等待读取转动范围内的雷达回波',roam_return_blocked:'正在重新选路，当前前后制动空间不足',
         roam_return_forward:'向前腾出回溯空间',roam_return_reverse:'沿后方通路倒车腾位',roam_return_scan:'等候新的全圈雷达数据',
         roam_return_rescan:'转动空间变化，正在重新选路',
+        roam_probe_forward:'沿当前雷达确认的短通路前进',roam_probe_reverse:'沿当前雷达确认的后方通路倒车',
+        roam_probe_turn:'调转车头，驶向雷达确认的侧方短通路',
         roam_rear_blocked:'后方无法安全倒车',roam_settle_pivot:'减速准备转向',
         roam_forward_unobserved:'前方观测不足',roam_no_passage:'未发现可通行方向',roam_wait:'等待可通行方向',
         roam_short_advance:'沿已确认的短通道直行',roam_lane_unobserved:'前方车宽范围内的观测不足',
-        roam_short_clearance:'短通道制动余量不足',roam_near_memory:'记忆中的近障限制前进，等待可用侧路',
+        roam_short_clearance:'短通道制动余量不足',roam_near_memory:'前方有历史近障记录，正在复核可移动空间',
         roam_near_return:'前方有近距回波，等待可用侧路'};
       el('progressLabel').textContent='行驶状态';
       el('progress').textContent=running?(paused?'已暂停':actions[feedback.avoidance_state]||'检查通道'):'待命';

@@ -77,6 +77,15 @@ test('confirmed obstacle columns clear only with repeated free observations thro
   assert.equal(map.value(10,0),1,'both old surfaces were traversed after the object left');
 });
 
+test('calibrated full scans mark each return at its corrected location only',()=>{
+  const map=scene();
+  map.accept({frame:'camera_init',generation:map.generation,stamp:2,pose:map.pose,
+    coverage:'full',lidarOffset:[0,0,.28],rayOrigin:map.pose.slice(0,2),sensorZ:.28,
+    marks:[[1,0]],heightHits:[[1.12,0,-.2]],rays:[]});
+  assert.equal(map.value(11,0),2);
+  assert.notEqual(map.value(10,0),2,'the raw projection must not leave a duplicate obstacle without height evidence');
+});
+
 test('long designated exit uses bounded legs and an occupied shortcut cannot cross a wall',()=>{
   const map=scene();rectangle(map,-8,455,-9,9);targets(map,'exit',44,.05);
   let goal=plan(map);assert.ok(goal);assert.ok(distance(map.pose,goal)<=2.001);

@@ -68,6 +68,15 @@ def run_maze(period=1.0):
                 dx, dy, dz = (row[0]*x+row[1]*y+row[2]*z for row in (local_x, local_y, world[2]))
                 if math.hypot(dx, dy) <= 6:
                     heights[(math.floor(dx/.06), math.floor(dy/.06), math.floor(dz/.08))] = [round(dx,3), round(dy,3), round(dz,3)]
+        if heights:
+            # Older map servers project marks from the body origin. Express
+            # the calibrated endpoints in that same frame for those readers.
+            ox, oy = origin[0]-p.x, origin[1]-p.y
+            bx, by = c*ox+s*oy, -s*ox+c*oy
+            planar = {(x+bx, y+by) for x, y, _ in heights.values() if math.hypot(x+bx, y+by) <= 6.}
+            projected_marks = list(planar)
+        else:
+            projected_marks = planar_points(marks, 0.06)
         free = planar_points(clearing, 0.035)
         if not full_scan:
             # Earlier controllers omit rear obstacle marks for Navfn. Rear
@@ -76,7 +85,7 @@ def run_maze(period=1.0):
         return dict(generation=generation, frame="camera_init", stamp=marks.header.stamp.to_sec(),
                     coverage="full" if full_scan else "front", sensorZ=origin[2], rayOrigin=origin[:2],
                     lidarOffset=mount if calibrated else None, heightHits=list(heights.values()),
-                    pose=[p.x, p.y, yaw], marks=planar_points(marks, 0.06), rays=free)
+                    pose=[p.x, p.y, yaw], marks=projected_marks, rays=free)
 
     sync.registerCallback(receive)
     last_sent = last_status = time.monotonic()

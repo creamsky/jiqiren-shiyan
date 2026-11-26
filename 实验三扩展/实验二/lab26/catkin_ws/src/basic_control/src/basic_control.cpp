@@ -163,7 +163,7 @@ class Experiment {
               motion->avoidance_feedback={feedback_v,feedback_w};
               if(gap_roaming&&motion->stage!=lab26::Stage::Fault){
                 motion->stage=lab26::Stage::Driving;
-                low_obstacles.append(pose,motion->avoidance_points);
+                low_obstacles.append(pose,motion->avoidance_points,true);
                 const double dx=ray_pose.x-pose.x,dy=ray_pose.y-pose.y;
                 const double c=std::cos(pose.yaw),s=std::sin(pose.yaw);
                 const lab26::RayView rays{&near_plane_rays,c*dx+s*dy,-s*dx+c*dy,ray_pose.yaw-pose.yaw};

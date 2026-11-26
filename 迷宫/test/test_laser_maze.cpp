@@ -1,4 +1,5 @@
 #include "basic_control/gap_roam.h"
+#include "basic_control/low_obstacles.h"
 #include <iostream>
 #include <chrono>
 #include <cstdlib>
@@ -388,10 +389,54 @@ void testAngledReturnAisle(){
     require(cmd.v>0.&&std::abs(p.yaw-exit)<.20,"Take the shorter rotation and face the observed angled return aisle");
   }
 }
+void testExplorePastIsolatedHit(){
+  using namespace lab26;
+  GapRoam planner;LowObstacles memory;ObstacleScan scan;NearPlaneRays rays;
+  // Real run: about 38 cm from the front bumper, a clear 20 cm prefix,
+  // short rear returns, and no long lane. Initialize in exploration mode.
+  const std::vector<ObstaclePoint> live={{.72,0.},{-.34,0.}};
+  for(int i=-38;i<=38;i++)rays.add(.62,.62*std::tan(i*pi/180.),0.);
+  scan.start=1.;scan.returns={{{.70,0.},0.,true,-.18},{{.70,0.},0.,true,-.18}};
+  memory.update(scan,{{.70,0.},{.70,0.}},{},true);
+  scan.returns.clear();
+  Command cmd{};
+  for(int i=0;i<15;i++){
+    scan.start=2.+.10*i;memory.update(scan,{},{},true);
+    auto points=live;memory.append({},points,true);
+    require(points.size()==live.size(),"Duplicate returns from an isolated scan cannot create persistent maze obstacles");
+    rays.received_at=scan.start;
+    cmd=planner.step({},points,{&rays,0,0,0},cmd,cmd,scan.start,.10,.18);
+    require(cmd.v>0.&&cmd.w==0.,"Exploration must use the observed braking lane even below the long-path threshold");
+  }
+  std::vector<ObstaclePoint> occupied=live;occupied.push_back({.48,0.});
+  cmd=planner.step({},occupied,{&rays,0,0,0},cmd,cmd,scan.start+.02,.02,.18);
+  require(cmd.v==0.&&cmd.w==0.,"A fresh obstacle still vetoes exploratory motion immediately");
+  memory.clear();scan.returns={{{1.,0.},0.,true,-.20}};
+  for(double stamp:{4.,4.1}){scan.start=stamp;memory.update(scan,{{1.,0.}},{},true);}
+  scan.returns.clear();scan.lower_rays={{{2.,0.},0.,false,-.20}};
+  for(double stamp:{5.,5.1}){scan.start=stamp;memory.update(scan,{},{},true);}
+  std::vector<ObstaclePoint> saved;memory.append({},saved,true);
+  require(saved.size()==1,"An upper beam cannot remove a confirmed low obstacle");
+  scan.lower_rays={{{2.,0.},0.,false,-.40}};
+  for(double stamp:{5.2,5.3}){scan.start=stamp;memory.update(scan,{},{},true);}
+  saved.clear();memory.append({},saved,true);
+  require(saved.empty(),"Fresh rays through the measured height clear a confirmed historical return");
+  for(int side:{-1,1}){
+    GapRoam searching;NearPlaneRays circle;std::vector<ObstaclePoint> walls;
+    for(int deg=-180;deg<180;deg++){
+      const double a=deg*pi/180.,x=std::cos(a),y=std::sin(a);
+      const double r=std::min(.66/std::max(1e-8,std::abs(x)),(side*y>0?.84:.66)/std::max(1e-8,std::abs(y)));
+      circle.add(r*x,r*y,0.);walls.push_back({r*x,r*y});
+    }
+    circle.received_at=6.;
+    cmd=searching.step({},walls,{&circle,0,0,0},{},{},6.,.02,.18);
+    require(cmd.v==0.&&side*cmd.w>0.,"During ordinary exploration turn toward the longer short side opening");
+  }
+}
 int main(int argc,char** argv){
   if(argc==3){
     const int variant=std::atoi(argv[1]),scene=std::atoi(argv[2]);
     testLaserMaze(scene==1,scene==1,true,scene==2,variant);return 0;
   }
-  testConePassingMargin();testShortForwardObservation();testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
+  testExplorePastIsolatedHit();testConePassingMargin();testShortForwardObservation();testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
   testLaserMaze(false,false,true);testLaserMaze(true,true,true);testLaserMaze(false,false,true,true);}
