@@ -5,7 +5,7 @@
 void require(bool ok,const char* msg) { if(!ok) { std::cerr<<"FAIL: "<<msg<<std::endl;std::exit(1); } }
 // Cast one revolution against finite barriers. Only the first surface of
 // each beam is visible, including at the corner and at the corridor exit.
-void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junction=false){
+void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junction=false,int variant=0){
   using namespace lab26;
   struct Wall {double x,y,dx,dy;};
   std::vector<Wall> walls={{-3,-.85,6,0},{3,-.85,0,4.45},{-3,.85,4.3,0},
@@ -36,10 +36,14 @@ void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junct
     }
     walls=edges;
   }
+  const int mirror=(variant&1)?-1:1;
+  for(auto& wall:walls){wall.y*=mirror;wall.dy*=mirror;}
+  p.y=mirror*(p.y+((variant&2)?.075:0.));p.yaw=mirror*((variant&2)?.12:0.);
+  const double response=cones?((variant&4)?.055:.10):1.;
   Command measured=cones?Command{.16,0.}:Command{};
   cmd=measured;
   double reversed=0.;bool turned=false;int pivotStops=0;bool firstPivot=false;
-  const auto outside=[&]{return pocket?(p.x<-.75||p.x<0&&std::abs(p.y)>1.):p.y>=3.8;};
+  const auto outside=[&]{return pocket?(p.x<-.75||p.x<0&&std::abs(p.y)>1.):mirror*p.y>=3.8;};
   std::vector<ObstaclePoint> hits;Pose scanPose{};
   bool centered=false;double longestHold=0,hold=0;
   std::vector<double> planningUs;
@@ -82,7 +86,6 @@ void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junct
     if(junction&&reachedEnd&&p.x>1.75&&std::cos(p.yaw)<-.98)completedUTurn=true;
     if(std::string(planner.state)=="roam_backtrack")followedLinks=true;
     // Simulate feedback lag while entering the corner at speed.
-    const double response=cones?.10:1.;
     measured.v+=response*(cmd.v-measured.v);
     measured.w+=response*(cmd.w-measured.w);
     if(wide&&std::abs(p.yaw)<2.90){
@@ -94,18 +97,34 @@ void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junct
     p.x+=.02*measured.v*c;p.y+=.02*measured.v*s;p.yaw+=.02*measured.w;
     reversed+=.02*std::max(0.,-cmd.v);
     if(std::abs(p.yaw)>1.)turned=true;
-    if(p.x<.95&&p.y<.13)centered=true;
+    if(p.x<.95&&mirror*p.y<.13)centered=true;
+    // Compare the actual rectangular chassis with every ground-truth edge,
+    // including the occluded faces of cones between lidar updates.
+    const double ch=std::cos(p.yaw),sh=std::sin(p.yaw);
+    for(const auto& w:walls){
+      const double dx=w.x-p.x,dy=w.y-p.y;
+      double lo=0.,hi=1.;
+      auto overlap=[&](double pos,double dir,double half){
+        if(std::abs(dir)<1e-10)return std::abs(pos)<=half;
+        const double a=(-half-pos)/dir,b=(half-pos)/dir;
+        lo=std::max(lo,std::min(a,b));hi=std::min(hi,std::max(a,b));
+        return lo<=hi;
+      };
+      require(!(overlap(ch*dx+sh*dy,ch*w.dx+sh*w.dy,body_half_length)&&
+                overlap(-sh*dx+ch*dy,-sh*w.dx+ch*w.dy,body_half_width)),"Chassis intersects a ground-truth barrier");
+    }
     for(const auto& hit:scan)require(std::abs(hit.x)>body_half_length||std::abs(hit.y)>body_half_width,"Body crossed a barrier in laser maze");
   }
   std::cout<<"Laser maze: x="<<p.x<<" y="<<p.y<<" longest hold="<<longestHold<<" centered="<<centered<<std::endl;
   std::sort(planningUs.begin(),planningUs.end());
   std::cout<<"Planner p95_us="<<planningUs[planningUs.size()*95/100]<<" max_us="<<planningUs.back()<<std::endl;
-  if(cones&&!junction)require(longestHold<.10,"Observed cone turn with lagged chassis feedback paused for an entire scan");
+  if(cones&&!junction)require(longestHold<(variant?.75:.10),"Observed cone turn with lagged chassis feedback paused too long");
   if(junction)require(completedUTurn&&followedLinks&&returned&&outside()&&occludedTicks==35&&longestHold>.12,
     "Finish dead end turn after a blind interval, return to junction, and take its unexplored arm");
   if(pocket){
     std::cout<<"Pocket reverse distance="<<reversed<<" m, turned="<<turned<<std::endl;
-    if(wide)require(outside()&&turned&&reversed==0.&&pivotStops==0,"One uninterrupted U-turn in an observed wide dead end");
+    if(wide&&(variant&2))require(outside()&&turned&&reversed>0.&&reversed<.60,"An off-centre chassis backs clear of the near cone before turning");
+    else if(wide)require(outside()&&turned&&reversed==0.&&pivotStops==0,"One uninterrupted U-turn in an observed wide dead end");
     else require(outside()&&reversed>1.&&turned,"Back out of a narrow dead end and turn toward an exit");
   }else require(centered&&outside()&&longestHold<2.,"Recenter, turn into side passage and exit with only visible laser returns");
 }
@@ -169,5 +188,61 @@ void testLocalScanAndTrail(){
     require(speed.v>0.&&speed.w==0.,"55 cm chassis travels continuously between visible barriers 57 cm apart");
   }
 }
-int main(){testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
+void testReturnDetour(){
+  using namespace lab26;
+  for(int side:{-1,1}){
+    GapRoam planner;Pose p{};
+    for(int i=0;i<=25;i++){p.x=i*.1;planner.step(p,{},{},{},{},1+i*.1,.02,.18);}
+    auto scan=[&](double opening,double time){
+      NearPlaneRays rays;std::vector<ObstaclePoint> points;
+      for(int deg=-180;deg<180;deg++){
+        double a=deg*pi/180.;
+        bool inGap=std::abs(wrap(a-opening))<.67;
+        double r=inGap?3.:.72;
+        double x=r*std::cos(a),y=r*std::sin(a);
+        rays.add(x,y,0.);if(!inGap)points.push_back({x,y});
+      }
+      return planner.step(p,points,{&rays,0,0,0},{},{},time,.02,.18);
+    };
+    require(scan(pi,4).w!=0.,"A dead end starts a return turn");
+    p.yaw=side*pi/2;
+    NearPlaneRays rays;
+    for(int i=0;i<360;i++)rays.add(2*std::cos(i*pi/180.),2*std::sin(i*pi/180.),0.);
+    auto blocked=planner.step(p,{{0,.35},{-.45,0}},{&rays,0,0,0},{},{},4.3,.02,.18);
+    require(blocked.v==0.&&blocked.w==0.,"New cone interrupts the half-finished turn");
+    auto next=scan(side*.18,4.6);
+    require(next.v>0.&&std::string(planner.state)=="roam_return_detour","An observed bypass after an interrupted U-turn permits forward progress");
+    require(planner.step(p,{{.325,0}},{&rays,0,0,0},next,next,4.62,.02,.18).v==0.,"An obstacle on the bypass still stops the car immediately");
+    p.yaw=pi;
+    next=scan(0.,4.9);
+    require(next.v>0.&&std::string(planner.state)=="roam_backtrack","Rejoin measured return route");
+  }
+}
+void testAngledReturnAisle(){
+  using namespace lab26;
+  for(int side:{-1,1}){
+    GapRoam planner;Pose p{};Command cmd{},feedback{};
+    const double exit=side*155*pi/180.;
+    for(int tick=0;tick<650;tick++){
+      NearPlaneRays rays;std::vector<ObstaclePoint> points;
+      for(int degree=-180;degree<180;++degree){
+        const double world=degree*pi/180.,a=world-p.yaw;
+        const bool gap=std::abs(wrap(world-exit))<.85;
+        const double r=gap?3.:.72,x=r*std::cos(a),y=r*std::sin(a);
+        rays.add(x,y,0.);if(!gap)points.push_back({x,y});
+      }
+      cmd=planner.step(p,points,{&rays,0,0,0},feedback,cmd,1+tick*.02,.02,.18);
+      if(cmd.v>0.)break;
+      feedback.w+=.1*(cmd.w-feedback.w);p.yaw+=.02*feedback.w;
+    }
+    std::cout<<"Return aisle "<<side*155<<" deg, departure yaw "<<p.yaw*180./pi<<" deg\n";
+    require(cmd.v>0.&&std::abs(p.yaw-exit)<.20,"Take the shorter rotation and face the observed angled return aisle");
+  }
+}
+int main(int argc,char** argv){
+  if(argc==3){
+    const int variant=std::atoi(argv[1]),scene=std::atoi(argv[2]);
+    testLaserMaze(scene==1,scene==1,true,scene==2,variant);return 0;
+  }
+  testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
   testLaserMaze(false,false,true);testLaserMaze(true,true,true);testLaserMaze(false,false,true,true);}

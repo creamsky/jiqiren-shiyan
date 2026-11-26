@@ -130,6 +130,9 @@ class GapRoam {
   double next_scan_=0.,heading_=0.,turn_sign_=1.;
   bool turning_=false,backing_=false,chosen_=false,rolling_turn_=false;
   bool backtracking_=false,dead_end_turn_=false,explored_=false;
+  bool detouring_=false;
+  Pose detour_start_{};
+  double detour_scan_yaw_=0.;
   Pose coverage_origin_{};
   std::array<double,36> coverage_{};
   double coverage_stamp_=-1.;
@@ -270,7 +273,8 @@ class GapRoam {
     if(!rays.scan)return hold("roam_no_scan");
     if(!(dt>0.&&dt<=.25))return hold("roam_control_interval");
     if(!brakeClear(points,measured))return hold("roam_braking_obstacle");
-    if(turning_&&std::abs(angle(heading_-pose.yaw))<.10){
+    const bool rescanDetour=detouring_&&!dead_end_turn_&&std::abs(angle(pose.yaw-detour_scan_yaw_))>=pi/6;
+    if(turning_&&(std::abs(angle(heading_-pose.yaw))<.10||rescanDetour)){
       turning_=dead_end_turn_=false;next_scan_=t;
     }
     if(!turning_&&t>=next_scan_){
@@ -318,12 +322,12 @@ class GapRoam {
       double route=0.;
       const auto destination=memory_.route(pose,route,backtracking_);
       const bool routed=destination==PassageMemory::Route::branch||destination==PassageMemory::Route::hop;
+      double bypassScore=-1e9,bypassHeading=0.;
       explored_=destination==PassageMemory::Route::home;
       if(explored_){backing_=false;return hold("roam_explored");}
       for(int i=0;i<bins;i++){
         if(depth[i]==0.)continue;
         const double a=angle(i*2*pi/bins);
-        if(backtracking_&&routed&&std::abs(angle(pose.yaw+a-route))>.65)continue;
         // While reversing out of a pocket, select a side exit or a U-turn.
         // The old approach can look clear again after only a short retreat.
         if(retreating||(backing_&&std::abs(angle(pose.yaw+a-back_start_.yaw))<pi/3))continue;
@@ -332,18 +336,50 @@ class GapRoam {
         const double neighbors=depth[(i+bins-1)%bins]+depth[(i+1)%bins];
         const double keep=continuing&&std::abs(angle(pose.yaw+a-prior_heading))<.2?.20:0.;
         const double heading=pose.yaw+a;
+        const double routeError=angle(heading-route);
+        if(backtracking_&&routed&&std::abs(routeError)>.65){
+          // The graph edge is a chord between odometry samples. A real
+          // passage can bend around a cone on either side of that chord.
+          const double score=2.*std::cos(routeError)+.9*std::cos(a)+.25*depth[i]+keep;
+          if(score>bypassScore){bypassScore=score;bypassHeading=heading;}
+          continue;
+        }
         const double score=depth[i]+.30*neighbors+.70*std::cos(a)+keep
           -2.5*memory_.visits(pose,heading)-1.2*memory_.retraced(pose,heading,depth[i])
           +(routed&&depth[i]>=.75&&std::abs(angle(heading-route))<.60?2.5*std::cos(heading-route):0.);
         if(score>best){best=score;chosen_=true;heading_=pose.yaw+a;}
       }
+      const bool bypass=!chosen_&&bypassScore>-1e9;
+      if(bypass){
+        detour_scan_yaw_=pose.yaw;
+        if(!detouring_)detour_start_=pose;
+        chosen_=true;heading_=bypassHeading;
+        // If the old edge stays closed for a junction's worth of measured
+        // travel, resume mapping the observed passage from this position.
+        if(std::hypot(pose.x-detour_start_.x,pose.y-detour_start_.y)>=.56){
+          memory_.observe(pose,true);backtracking_=false;
+        }
+      }
+      detouring_=bypass&&backtracking_;
       if(!backing_&&!backtracking_&&std::all_of(depth.begin(),depth.end(),[](double d){return d>=1.15;})){
         // In an observed open area there is no junction to resolve.
         chosen_=true;heading_=continuing&&std::abs(angle(prior_heading-pose.yaw))<.25?prior_heading:pose.yaw;
       }
       turning_=chosen_&&(std::abs(angle(heading_-pose.yaw))>.60||depth[0]==0.);
       if(!retreating&&canTurn&&deadEnd&&(!backtracking_||std::abs(angle(route-pose.yaw-pi))<.65)){
-        heading_=pose.yaw+pi;chosen_=turning_=dead_end_turn_=true;
+        // Aim down the actual return aisle. A fixed +pi can choose the
+        // long rotation when the vehicle entered the pocket at an angle.
+        double weight=depth[bins/2],offset=0.;
+        for(int sign:{-1,1}){
+          for(int j=1;j<=bins/6;++j){
+            const double d=depth[bins/2+sign*j];
+            if(d<.50)break;
+            weight+=d;offset+=sign*j*d;
+          }
+        }
+        const double centre=pi+(2*pi/bins)*offset/weight;
+        const double bearing=std::abs(centre-pi)>.08&&seenLane(points,centre,.50,rays)?centre:pi;
+        heading_=pose.yaw+bearing;chosen_=turning_=dead_end_turn_=true;
       }
       if(chosen_&&!turning_){
         const double bearing=angle(heading_-pose.yaw);
@@ -360,7 +396,7 @@ class GapRoam {
       }
       rolling_turn_=turning_&&!backing_&&std::abs(angle(heading_-pose.yaw))<=.55*pi;
       if(chosen_&&backing_){backing_=false;turning_=true;}
-      if(chosen_&&destination==PassageMemory::Route::branch)backtracking_=false;
+      if(chosen_&&!bypass&&destination==PassageMemory::Route::branch)backtracking_=false;
       if(turning_)turn_sign_=std::copysign(1.,angle(heading_-pose.yaw));
       if(!chosen_&&!backing_&&(!backtracking_||std::abs(angle(route-pose.yaw-pi))<.65)&&seenLane(points,pi,.20,rays)){
         backing_=true;back_start_=pose;
@@ -386,7 +422,11 @@ class GapRoam {
           if(seenLane(points,pi,.20,rays)){backing_=true;back_start_=pose;}
           return hold(obstructed?"roam_pivot_obstacle":"roam_pivot_unobserved");
         }
-        const double speed=std::min(.52,std::sqrt(2.*.60*std::max(0.,std::abs(delta)-.06)));
+        // Allow for chassis response before the angular deceleration takes
+        // effect. Keep the full rate on the long part of a U-turn.
+        const double toward=std::max(0.,measured.w*std::copysign(1.,delta));
+        const double remaining=std::max(0.,std::abs(delta)-.04-.18*toward);
+        const double speed=std::min(.52,std::sqrt(2.*.60*remaining));
         desired.w=std::copysign(speed,std::abs(delta)>pi/2?turn_sign_:delta);
         state=dead_end_turn_?"roam_uturn":"pivot_to_path";
         // A translating turn can sweep farther than a stationary pivot. Bound
@@ -422,7 +462,8 @@ class GapRoam {
         const double look=.04+.25*speed+speed*speed/.40;
         if(cruise_==0.||!seenLane(points,0.,look,rays))return hold("roam_forward_unobserved");
         if(measured.v<-.02)return hold("roam_settle_forward");
-        desired.v=cruise_;desired.w=std::max(-.38,std::min(.38,delta));state=backtracking_?"roam_backtrack":"roam_forward";
+        desired.v=cruise_;desired.w=std::max(-.38,std::min(.38,delta));
+        state=detouring_?"roam_return_detour":backtracking_?"roam_backtrack":"roam_forward";
         if(std::abs(delta)<.08)desired.w=0.;
       }
     }else return hold(explored_?"roam_explored":backtracking_?"roam_return_blocked":"roam_no_passage");
