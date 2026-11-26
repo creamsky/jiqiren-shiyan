@@ -17,6 +17,7 @@ struct ObstaclePoint { double x,y; bool remembered=false; };
 // of the lidar plane. These observations describe coverage, not obstacles.
 struct NearPlaneRays {
   std::array<ObstaclePoint,360> ends{};
+  double received_at=-1.;
   void add(double x,double y,double z){
     const double r=std::hypot(x,y);
     if(r<.40 || r>20. || !std::isfinite(z) || !std::isfinite(r))return;

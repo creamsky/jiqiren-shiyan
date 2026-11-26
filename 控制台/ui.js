@@ -42,6 +42,7 @@ window.Workbench = (() => {
     const old=selected();if(old)saved.set(old.id,options());
     const item=items.find(item=>item.id===id);if(!item||!item.enabled)return;
     byId('experiment').value=id;byId('selectedGroup').textContent=item.title+' · '+(item.category||'其他');byId('selectedTitle').textContent=item.name||item.title;byId('selectedDescription').textContent=item.description;byId('selectedIcon').replaceChildren(icon(item.icon).firstChild);renderParameters(item);
+    byId('navigationGoalPanel').hidden=byId('mapPickGoal').hidden=id!=='lab3-xy';
     byId('experiment').dispatchEvent(new Event('change',{bubbles:true}));
   }
   function renderList(){

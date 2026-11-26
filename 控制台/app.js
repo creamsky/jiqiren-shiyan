@@ -1,6 +1,7 @@
 const $=id=>document.getElementById(id);
 let token='', seq=0, mine=false, online=false, manual=false, direction='', busy=false, taskActive=false, chain=Promise.resolve();
 let vectorSupported=false;
+let submittingStart=false;
 let lease='',armed=false,roomState=null,renewing=null,switching=false,switchHint='',controlEpoch=0,lastSnapshot=null;
 const held=new Map();
 const message=text=>{$('message').textContent=text;};
@@ -17,7 +18,20 @@ function post(url,data,urgent=false){
   if(urgent)return run();
   const next=chain.then(run);chain=next.catch(()=>{});return next;
 }
-async function command(value){if(switching&&!['zero','stop','pause','heartbeat'].includes(value))return false;const epoch=controlEpoch;try{await post('/api/command',{command:value,...(['start','pause','resume','stop'].includes(value)?{experiment:$('experiment').value}:{}),...(value==='start'?{options:{...window.Workbench.options(),...($('experiment').value==='lab3-xy'?window.NavigationGoal?.():{}),...($('experiment').value==='maze'?window.MazeView?.options():{})}}:{})},['zero','stop','pause'].includes(value));return epoch===controlEpoch;}catch(error){message(error.message);return false;}}
+async function command(value,intent,prepareId){
+  if(switching&&!['zero','stop','pause'].includes(value))return false;
+  const epoch=controlEpoch,experiment=$('experiment').value;
+  try{
+    const payload={command:value};
+    if(['start','pause','resume','stop'].includes(value))payload.experiment=experiment;
+    if(value==='start'){
+      payload.intent=intent;payload.prepareId=prepareId;payload.options=window.Workbench.options();
+      if(intent==='run'&&experiment==='lab3-xy')Object.assign(payload.options,window.NavigationGoal?.());
+      if(intent==='run'&&experiment==='maze')Object.assign(payload.options,window.MazeView?.options());
+    }
+    await post('/api/command',payload,['zero','stop','pause'].includes(value));return epoch===controlEpoch;
+  }catch(error){message(error.message);return false;}
+}
 function paintKeys(){
   const keys=new Set(held.values());
   document.querySelectorAll('[data-direction]').forEach(b=>b.classList.toggle('active',keys.has(b.dataset.direction)));
@@ -60,10 +74,21 @@ if(hardwareButton)hardwareButton.onclick=async()=>{
   }catch(error){$('pingState').textContent=error.message;hardwareButton.disabled=false;}
 };
 document.querySelectorAll('[data-command]').forEach(button=>button.onclick=async()=>{
-  zero();const c=button.dataset.command;
+  const c=button.dataset.command;
+  if(c==='start'){
+    if(submittingStart||!button.dataset.intent)return;
+    submittingStart=true;button.disabled=true;
+    const {intent,prepareId}=button.dataset;
+    try{
+      zero();
+      if(await command(c,intent,prepareId))message(intent==='prepare'?'已请求准备实验':'已发送启动请求，等待车端反馈');
+      await refresh();
+    }finally{submittingStart=false;}
+    return;
+  }
+  zero();
   if(c==='manual'){
     if(!mine){if(!await command('claim'))return;mine=true;}
-    if(!await command('heartbeat'))return;
     if(await command('manual')){armed=true;manual=true;message('键盘驾驶已启用：W/S 前后，A/D 转向，可组合按下');}
   }else if(await command(c))message('已发送：'+button.textContent);
 });
@@ -80,13 +105,13 @@ document.addEventListener('keydown',event=>{
   if('wasd'.includes(key)&&key.length===1){event.preventDefault();if(!event.repeat)hold(key);}
 });
 document.addEventListener('keyup',event=>release('key:'+event.key.toLowerCase()));
-function suspend(){zero();armed=false;manual=false;if(mine&&online)command('pause');}
+function suspend(){if(manual||held.size)zero();armed=false;manual=false;}
 function leaveControl(){
   if(switching)return;
   suspend();if(mine&&token){fetch('/api/room',{method:'POST',headers:{'Content-Type':'application/json','X-Control-Token':token},body:JSON.stringify({action:'release',seq:++seq}),keepalive:true}).catch(()=>{});}mine=false;lease='';
 }
-window.addEventListener('blur',leaveControl);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)leaveControl();});
+window.addEventListener('blur',suspend);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)suspend();});
 window.addEventListener('pagehide',leaveControl);
 function hardwareActive(data){
   const state=data?.status||{};
@@ -121,6 +146,10 @@ async function switchToSimulation(event){
   try{
     const previous=lastSnapshot;
     let data=await readHardware();
+    if(data.task?.onboardId&&data.task.phase==='running'||data.task?.vehicleJob&&['preparing','running'].includes(data.task.phase)){
+      if(data.room?.mine)await post('/api/room',{action:'release'},true);
+      await leaveHardware();return;
+    }
     if(!data.connected){
       if(hardwareActive(data)||hardwareActive(previous))throw Error('真实机器人连接中断，无法确认停车，请恢复连接后切换');
       await leaveHardware();return;
@@ -169,17 +198,19 @@ async function refresh(){
       if(active||key!==lastTaskView)window.Workbench.syncTask?.(data.task);
       lastTaskView=key;
     }
-    if(!online){mine=false;zero();}
+    if(!online)suspend();
     const state=data.status;manual=state.mode==='manual'&&armed;vectorSupported=state.manual_vector===true;
-    window.NavigationMap?.(state.map_generation,data.task?.phase==='preparing');
+    const navigationTask=data.task?.experiment==='lab3-xy'?data.task:null;
+    const canPickGoal=online&&navigationTask?.phase==='ready'&&data.preparedExperiment==='lab3-xy';
+    window.NavigationMap?.(state.map_generation,data.task?.phase==='preparing',navigationTask?.prepareId,canPickGoal);
     paintKeys();
     if(!manual&&held.size)zero();
-    $('chassis').textContent=!online?'未连接':state.feedback_fresh!==true?'等待底盘反馈':state.chassis_mode===1?'网络 / CAN':state.chassis_mode===3?'遥控器接管':state.chassis_mode===0?'待切入 CAN（模式 0）':`底盘模式 ${state.chassis_mode}`;
+    $('chassis').textContent=!online?'未连接':state.feedback_fresh!==true||!Number.isInteger(state.chassis_mode)?'等待底盘反馈':state.chassis_mode===1?'网络 / CAN':state.chassis_mode===3?'遥控器接管':state.chassis_mode===0?'待切入 CAN（模式 0）':`底盘模式 ${state.chassis_mode}`;
     $('connection').textContent=online?'真实机器人 · 在线':'真实机器人 · 离线';$('connection').classList.toggle('online',online);
     if(!data.room){$('claim').disabled=!online||mine;$('claim').textContent=mine?'已取得控制权':'取得控制权';$('lease').textContent=mine?'本窗口正在控制':data.owned?'其他窗口正在控制':'未取得控制权';}
     $('stage').textContent=online?(labels[state.stage]||state.stage||'待命'):'等待连接';$('reason').textContent=online?(state.reason||'控制器在线'):'界面已就绪，等待机器人上线';
     if(online&&state.reason==='Operator stop'){$('stage').textContent='已停止 / 待命';$('reason').textContent='已按操作请求停车；准备实验后可重新启动';}
-    $('mode').textContent=!online?'未启用':manual?'手动模式':'自动模式';
+    $('mode').textContent=!online?'未启用':state.control_permitted===false?'仅观察':manual?'手动模式':'自动模式';
     const remoteActive=state.feedback_fresh===true&&(state.chassis_mode===3||[1,3].includes(state.remote_switch));
     $('driveStatus').textContent=!online?'控制连接未建立':remoteActive?'遥控器已接管，CAN 反馈在线。请停稳并将遥控器切回网络控制档。':state.manual_block_message?'驾驶受阻：'+state.manual_block_message:!mine?'取得控制权后，可启用键盘驾驶':manual?'键盘驾驶已启用 · 按住 WASD，松开停车':'点击“启用键盘驾驶”恢复或切换手动模式';
     let progress=Number(state.progress)||0,total=Number(state.total_distance)||5;
@@ -192,8 +223,11 @@ async function refresh(){
     const taskBusy=task&&['preparing','running','stopping'].includes(task.phase);
     taskActive=!!taskBusy;
     const startButton=document.querySelector('[data-command="start"]');
-    startButton.textContent=lab1?'开始建图 · 30 秒':data.preparedExperiment===selected?'开始实验':'准备实验';
-    startButton.disabled=!online||!mine||taskBusy||!selected||!!data.room?.stopping;
+    const prepared=data.preparedExperiment===selected;
+    startButton.dataset.intent=lab1||prepared?'run':'prepare';
+    startButton.dataset.prepareId=prepared&&task?.experiment===selected?task.prepareId||'':'';
+    startButton.textContent=taskBusy&&task.experiment===selected?(task.phase==='preparing'?'准备中…':task.phase==='stopping'?'停止中…':task.awaitingActive?'等待车端确认':'运行中'):lab1?'开始建图 · 30 秒':prepared?'开始实验':'准备实验';
+    startButton.disabled=submittingStart||!online||!mine||taskBusy||!selected||!!data.room?.stopping||!!(prepared&&data.startBlockReason);
     document.querySelectorAll('[data-command="pause"],[data-command="resume"]').forEach(b=>b.disabled=b.disabled||lab1||!!(task&&['preparing','stopping'].includes(task.phase)));
     $('taskBadge').textContent=window.Workbench.selected()?.badge||'待命';
     if(eight&&state.stage==='DRIVING')$('stage').textContent='八字轨迹跟踪';
@@ -219,6 +253,7 @@ async function refresh(){
       Object.assign(reasons,{'Pivoting toward the planned route':'停止前进，原地对准规划路线后继续','Planned pivot is obstructed':'原地旋转范围受阻，寻找其他动作或短退腾位'});
       Object.assign(reasons,{'DWA is replanning around obstacles':'根据当前障碍地图重新规划通路'});
       Object.assign(reasons,{'Waiting for current global path':'等待本轮地图上的全局路径','Waiting for a footprint-clear path':'当前路径的车身通行空间不足，正在重新选路'});
+      reasons['Advancing straight to clear the rear turning envelope']='车尾限制转向，正在沿前方通道直行腾位';
       Object.assign(reasons,{'Insufficient rear braking clearance':'后方实测净距不足以停稳','Rear corridor lacks covering returns':'后方车宽内的雷达覆盖不足','Backing to an observed turning space':'后方有可用转向位，正在直退腾位','Observed reverse corridor changed':'已检查的后退通道发生变化，正在复核'});
       Object.assign(reasons,{'No continuous measured approach to retrace':'缺少连续的实走来路','Recorded turn is obstructed':'原路转角受阻，等待重新检查','Reached the start of the recorded route':'已回到这段实走轨迹起点，重新选路'});
       Object.assign(reasons,{'No recent straight approach to retrace':'最近没有足够长的直行轨迹','Rear corridor obstructed or unobserved':'后方有障碍或雷达覆盖不足','Retracing the measured approach':'沿有行驶记录的通道低速回退','Backing stopped at a possible side exit':'已发现侧向出口，停稳复核','Retreat complete; checking another exit':'已退到记录位置，重新检查其他出口','Retreat departed from recorded approach':'偏离原路，结束回退','No measured retreat progress':'回退无实测进展，已停车','Retreat interrupted':'回退已中断'});
@@ -252,6 +287,11 @@ async function refresh(){
     $('bar').style.width=percent+'%';$('progressPercent').textContent=percent.toFixed(0)+'%';
     $('taskProgress').setAttribute('aria-valuenow',percent.toFixed(0));
     window.MazeView?.status(data,online,mine);
+    if(prepared&&task?.phase==='ready'&&data.startBlockReason){$('stage').textContent='已准备 · 等待开始';$('reason').textContent=data.startBlockReason;}
+    else if(prepared&&selected==='lab3-xy'&&task?.phase==='ready'&&!window.hasNavigationGoal?.()){
+      startButton.disabled=true;$('reason').textContent='准备完成。请在点云中选终点，或填写 X 和 Y 坐标。';
+    }
+    if(task?.phase==='failed'&&task.experiment===selected&&task.log){$('reason').textContent=task.log.trim().split('\n').at(-1);}
     // Other authenticated tabs may still issue an emergency task stop.
     $('stop').disabled=!online&&!taskActive;
     window.RoomUI?.render(data.room,online,data.urls);
@@ -259,15 +299,28 @@ async function refresh(){
   }catch{online=false;mine=false;armed=false;zero();$('connection').textContent='服务连接中断';document.querySelectorAll('[data-command],[data-direction],#stop,#zero,#claim').forEach(b=>b.disabled=true);window.MazeView?.status({},false,false);window.RoomUI?.render(roomState,false);}
 }
 setInterval(async()=>{
-  if(busy||switching||!mine||!online||document.hidden||!document.hasFocus())return;
+  if(!direction||!manual||busy||switching||!mine||!online||document.hidden||!document.hasFocus())return;
   busy=true;
-  try{await post('/api/command',{command:'heartbeat'});if(direction)await sendDrive();}
+  try{await sendDrive();}
   catch(error){mine=false;zero();message(error.message);}finally{busy=false;}
 },100);
 setInterval(refresh,300);
+let monitorRequest=null;
+async function watchSession(session){
+  monitorRequest?.abort();
+  const request=monitorRequest=new AbortController();
+  while(token===session&&!request.signal.aborted){
+    try{
+      const response=await fetch('/api/session/monitor',{headers:{'X-Control-Token':session},signal:request.signal,cache:'no-store'});
+      if(response.status===403)return;
+      if(response.ok)await response.text();
+    }catch{}
+    if(!request.signal.aborted)await new Promise(resolve=>setTimeout(resolve,1000));
+  }
+}
 function openSession(){
   if(renewing)return renewing;
-  renewing=fetch('/api/session').then(r=>r.json()).then(data=>{if(!data.token)throw Error('无法建立会话');token=data.token;applyRoom(data.room);window.RoomUI?.init({act:(action,extra)=>{if(['release','takeover'].includes(action))zero();return post('/api/room',{action,...extra},true);},online:()=>online,message},data);}).finally(()=>{renewing=null;});return renewing;
+  renewing=fetch('/api/session').then(r=>r.json()).then(data=>{if(!data.token)throw Error('无法建立会话');token=data.token;watchSession(token);applyRoom(data.room);window.RoomUI?.init({act:(action,extra)=>{if(['release','takeover'].includes(action))zero();return post('/api/room',{action,...extra},true);},online:()=>online,message},data);}).finally(()=>{renewing=null;});return renewing;
 }
 openSession().then(refresh).catch(()=>message('无法连接共享服务，请刷新页面'));
 fetch('/api/experiments').then(r=>r.json()).then(data=>window.Workbench.load(data.experiments)).catch(()=>message('无法加载实验列表'));

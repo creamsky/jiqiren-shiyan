@@ -1,5 +1,13 @@
 const {test}=require('node:test');const assert=require('node:assert/strict');
 const {Trajectory}=require('./trajectory.cjs');
+test('trail cursor only sends new samples and recovers from an expired window or generation',()=>{
+ const t=new Trajectory();t.add({stamp:1,pose:[0,0,0]});const first=t.delta('',0);
+ t.add({stamp:2,pose:[.1,0,0]});assert.deepEqual(t.delta(first.id,first.end).points,[[.1,0,0]]);
+ assert.deepEqual(t.delta(t.id,t.end).positions,[]);
+ for(let i=1;i<2010;i++)t.add({stamp:i+2,pose:[.1+i*.03,0,0]});
+ assert.equal(t.delta(first.id,1).reset,true);
+ t.clear();assert.equal(t.delta(first.id,0).reset,true);
+});
 test('trajectory uses finite measured poses, limits memory and resets discontinuities',()=>{
  const t=new Trajectory();t.add({stamp:1,pose:[0,0,0]});t.add({stamp:1,pose:[1,1,0]});assert.equal(t.points.length,1);
  t.add({stamp:2,pose:[NaN,0,0]});assert.equal(t.points.length,1);

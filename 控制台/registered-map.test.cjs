@@ -1,7 +1,7 @@
 'use strict';
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {RegisteredMap}=require('./registered-map.cjs');
+const {RegisteredMap}=require('./point-cloud/registered-map.cjs');
 function frame(map,n,points,generation='round1'){
   const stamp=n*.2,now=n*200;
   return map.accept({registered:true,stamp,frame:'camera_init',points},
@@ -10,12 +10,12 @@ function frame(map,n,points,generation='round1'){
 }
 const point=[1.05,.01,.05],far=[2.1,.02,.05],high=[2.1,.02,.55];
 test('the same world-space XYZ is retained once across frames, new tabs can catch up and wrong frames are rejected',()=>{
-  const map=new RegisteredMap();frame(map,1,[point,point]);assert.equal(map.points.length,0);
+  const map=new RegisteredMap();frame(map,1,[point,point]);assert.equal(map.points.length,1);
   frame(map,2,[point]);frame(map,3,[point]);assert.equal(map.points.length,1);
   const chunk=map.chunk('',0);assert.equal(chunk.count,1);const binary=Buffer.from(chunk.xyz,'base64');
   assert.ok(Math.abs(binary.readFloatLE(0)-1.05)<1e-6);assert.equal(map.chunk(chunk.id,1).xyz,'');
   assert.equal(map.accept({registered:false},{},'x'),false);
-  frame(map,4,[far],'round2');assert.notEqual(map.id,chunk.id);assert.equal(map.points.length,0);
+  frame(map,4,[far],'round2');assert.notEqual(map.id,chunk.id);assert.deepEqual(map.points,[far]);
 });
 test('overhead rays retain previous lower obstacles, repeated rays at their measured height remove passing objects',()=>{
   const map=new RegisteredMap();

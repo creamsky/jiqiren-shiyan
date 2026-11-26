@@ -1,0 +1,19 @@
+.scene-legend [hidden], #sceneMapTabs button[hidden], #groundSetting[hidden],
+#navigationGoalPanel[hidden], #mapPickGoal[hidden], #mapGoalHint[hidden],
+#enhanceSetting[hidden] { display: none; }
+#mapPickGoal { white-space: nowrap; }
+#mapGoalHint { max-width: 24em; }
+#scanLegend .live-return { background: #ab8aff; }
+[data-theme="light"] #scanLegend .live-return { background: #633dc2; }
+#cloudMapFit { justify-self: end; }
+#sceneMapTabs .field-label { align-self: center; }
+#sceneMapTabs .segmented button { padding-inline: 5px; }
+.cloud-source-field .segmented { grid-column: 1 / -1; }
+.cloud-source-field .segmented button { flex: 1; padding-inline: 6px; }
+@media (max-width: 800px), (pointer: coarse) {
+  #sceneMapTabs .segmented button { min-height: 44px; }
+}
+@media (max-width: 500px) {
+  .scene-readout:has(#mapGoalHint:not([hidden])) { flex-wrap: wrap; }
+  #mapGoalHint { flex-basis: 100%; max-width: none; }
+}

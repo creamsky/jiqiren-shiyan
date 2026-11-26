@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
+# OBSERVE_ONLY_CONNECT_V1
 set -e
 cd "$(dirname "$0")"
 exec 9>.console-service.lock
 flock -x 9
 if ss -ltn | grep -q ':8766 '; then
-  exec "${ROBOT_PYTHON:-/usr/bin/python3}" ./enable_can_mode.py
+  exit 0
 fi
 mkdir -p logs
 setsid bash ./start_console.sh 9>&- >logs/console_service.log 2>&1 </dev/null &

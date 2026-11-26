@@ -1,11 +1,11 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {MazeScanStream}=require('./scan-stream.cjs');
+const {LidarReader}=require('./point-cloud/lidar-reader.cjs');
 
 test('a healthy source with an unaccepted map is distinct from a dropped lidar pair',()=>{
   let current='old';
-  const stream=new MazeScanStream(scan=>scan.type==='lidar_mount'||scan.generation===current);
+  const stream=new LidarReader(scan=>scan.type==='lidar_mount'||scan.generation===current);
   assert.equal(stream.accept('{"type":"lidar_mount","lidarOffset":[0,0,0.28]}',100),false);
   assert.equal(stream.sourceAt,0);
   assert.equal(stream.lastSampleAt,0);

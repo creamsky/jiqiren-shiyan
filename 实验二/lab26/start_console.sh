@@ -16,6 +16,5 @@ until timeout 3 rosparam list >/dev/null 2>&1; do
   if ((SECONDS>=deadline)); then echo 'ROS master not ready; inspect logs/sensors.log' >&2; exit 1; fi
   sleep 1
 done
-"${ROBOT_PYTHON:-/usr/bin/python3}" ./enable_can_mode.py
 mkdir -p logs
 roslaunch basic_control basicControl.launch node_name:=labConsole console:=true dry_run:=false csv:="$LAB26_ROOT/logs/console_$(date +%Y%m%d_%H%M%S).csv"

@@ -16,7 +16,7 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
   const commands=[],pose=[.05,.05,0];
   const baseStatus={stage:'FAULT',reason:'Operator stop',mode:'auto',paused:true,v:0,w:0,feedback_v:0,feedback_w:0,
     sensors_ready:true,feedback_fresh:true,dwa_ready:true,chassis_mode:1,chassis_errors:0,remote_switch:2,
-    xy_planner:'navfn_pursuit',maze_protocol:2,maze_leg:''};
+    xy_planner:'navfn_pursuit',maze_protocol:2,gap_roam:true,maze_leg:''};
   const rays=Array.from({length:360},(_,i)=>[4*Math.cos(i*Math.PI/180),4*Math.sin(i*Math.PI/180)]);
   const robot=net.createServer(socket=>{
     peer=socket;let buffer='';
@@ -31,7 +31,7 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
   const probe=net.createServer();await listen(probe);const port=probe.address().port;
   await new Promise(resolve=>probe.close(resolve));
   const app=createConsole({port,tcpPort:robot.address().port,leaseMs:20000,sshRunner:async()=>{remotePreparations++;return 0;},
-    mazeStreamFactory:fn=>{accept=fn;return {start(){streaming=true;},stop(){streaming=false;}};}});
+    lidarReaderFactory:fn=>{accept=fn;return {start(mode){streaming=mode==='maze';},stop(){streaming=false;}};}});
   const timer=setInterval(()=>{
     if(!peer||peer.destroyed)return;
     stamp+=.06;
@@ -73,14 +73,28 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
     const start=(options={})=>post('/api/command',{command:'start',experiment:'maze',options});
     assert.equal((await start()).code,200);
     await until(async()=>(await get('/api/status')).preparedExperiment==='maze');
-    const prepared=await get('/api/maze');assert.notEqual(prepared.id,initial.id);initial=prepared;
+    const prepared=await until(async()=>{const m=await get('/api/maze');return m.healthy&&m;});assert.notEqual(prepared.id,initial.id);initial=prepared;
     assert.notEqual((await get('/api/cloud-map')).id,cloud.id);
-    assert.equal(remotePreparations,0,'healthy live sensors must be reused');
+    assert.equal(remotePreparations,1,'each new preparation restarts the experiment stack');
     assert.ok(!commands.some(c=>c.startsWith('startmaze ')));
     assert.equal((await post('/api/maze/goal',{kind:'exit',x:1,y:0,id:initial.id},guest)).code,409);
     assert.equal((await start({mapId:'old',mode:'roam'})).code,409);
     assert.equal((await post('/api/maze/goal',{kind:'exit',x:50,y:50,id:initial.id})).code,409);
-    assert.equal((await start({mapId:initial.id,mode:'roam',hint:[8,0]})).code,200);
+    const firstRound=(await get('/api/status')).task.prepareId;
+    const firstMap=initial.id;
+    assert.equal((await post('/api/maze/goal',{kind:'exit',x:pose[0],y:pose[1],id:firstMap})).code,200);
+    const nextStart=(intent,prepareId,options={})=>post('/api/command',{command:'start',experiment:'maze',intent,prepareId,options});
+    assert.equal((await nextStart('run',firstRound,{mapId:firstMap})).code,200);
+    const completed=await until(async()=>{const s=await get('/api/status');return s.task.phase==='completed'&&s;});
+    assert.equal(completed.preparedExperiment,null);
+    assert.ok(!commands.some(c=>c.startsWith('startmaze ')),'an exit at the stopped robot completes without dispatching a leg');
+    assert.equal((await nextStart('run',firstRound,{mapId:firstMap})).code,409);
+    assert.equal((await nextStart('prepare')).code,200);
+    const second=await until(async()=>{const s=await get('/api/status');return s.preparedExperiment==='maze'&&s;});
+    assert.notEqual(second.task.prepareId,firstRound);
+    initial=await until(async()=>{const m=await get('/api/maze');return m.healthy&&m;});assert.notEqual(initial.id,firstMap);assert.equal(initial.exit,null);
+    assert.equal((await nextStart('run',firstRound,{mapId:initial.id})).code,409);
+    assert.equal((await nextStart('run',second.task.prepareId,{mapId:initial.id,mode:'roam',hint:[8,0]})).code,200);
     await until(()=>commands.some(c=>c.startsWith('startmaze ')));
     const running=await get('/api/maze');assert.equal(running.mode,'roam');assert.ok(running.hint[0]>8);
     assert.equal((await post('/api/command',{command:'manual'})).code,409);
@@ -90,6 +104,32 @@ test('maze HTTP flow fences preparation, goals, roaming, and map resets by lease
     const next=await until(async()=>{const m=await get('/api/maze');return m.healthy&&m;});
     assert.notEqual(next.id,initial.id);assert.equal(next.exit,null);assert.equal(next.hint,null);
     assert.equal(commands.at(-1),'stop');
+    Object.assign(baseStatus,{dwa_ready:false,chassis_mode:3,remote_switch:1,control_permitted:false});
+    await until(async()=>(await get('/api/status')).status.chassis_mode===3);
+    assert.equal((await nextStart('prepare')).code,200);
+    const observe=await until(async()=>{const s=await get('/api/status');return s.preparedExperiment==='maze'&&s;});
+    assert.equal(observe.connected,true);assert.match(observe.startBlockReason,/遥控器/);
+    assert.equal((await nextStart('run',observe.task.prepareId,{mode:'roam'})).code,409);
+    assert.ok(!commands.some(c=>c.startsWith('startroam ')));
+    Object.assign(baseStatus,{chassis_mode:1,remote_switch:2,control_permitted:true,onboard_protocol:1});
+    await until(async()=>!(await get('/api/status')).startBlockReason);
+    assert.equal((await nextStart('run',observe.task.prepareId,{mode:'roam'})).code,200);
+    await until(()=>commands.some(c=>c.startsWith('onboard '+observe.task.prepareId+' startroam ')));
+    Object.assign(baseStatus,{stage:'DRIVING',paused:false,roaming:true,onboard_id:observe.task.prepareId,onboard_experiment:'maze'});
+    await until(async()=>!(await get('/api/status')).task.awaitingActive);
+    assert.equal((await get('/api/status')).task.phase,'running');
+    const sentAt=commands.length;
+    assert.equal((await post('/api/room',{action:'release'})).code,200);
+    const previousPeer=peer;peer.destroy();
+    await until(async()=>!(await get('/api/status')).connected);
+    await until(async()=>peer!==previousPeer&&(await get('/api/status')).connected);
+    assert.deepEqual(commands.slice(sentAt).filter(c=>['stop','pause','resume'].includes(c)),[]);
+    const recovered=await get('/api/status');
+    assert.equal(recovered.owned,false);assert.equal(recovered.task.onboardId,observe.task.prepareId);assert.equal(recovered.task.phase,'running');
+    const manage=await post('/api/command',{command:'claim'});assert.equal(manage.code,200);lease=manage.data.room.lease;
+    assert.equal((await post('/api/command',{command:'manual'})).code,409);
+    assert.equal((await post('/api/command',{command:'stop'})).code,200);
+    await until(()=>commands.slice(sentAt).includes('stop'));
   }finally{
     clearInterval(timer);app.close();peer?.destroy();await new Promise(resolve=>robot.close(resolve));
   }

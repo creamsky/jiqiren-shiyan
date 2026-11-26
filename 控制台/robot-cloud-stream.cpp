@@ -1,4 +1,5 @@
-// Read-only viewer: preserve every finite XYZ point; never publish robot commands.
+// The high-volume sources are subscribed on demand and delivered as bounded previews.
+#include <algorithm>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/point_cloud2_iterator.h>
@@ -58,10 +59,12 @@ void emit(const Batch& batch, const char* source, unsigned long long sequence) {
       << ",\"frames\":" << batch.frames << ",\"sourcePoints\":" << batch.sourcePoints
       << ",\"windowMs\":" << (std::string(source) == "aggregate" ? 1000 : 0)
       << ",\"spanMs\":" << (batch.stamp - batch.firstStamp) * 1000 << ",\"points\":[";
-  // Nine significant digits round-trip a float32 XYZ value without downsampling.
+  // Rotate a bounded preview sample while retaining original input counts.
   out << std::setprecision(9);
   bool first = true;
-  for (const auto& p : batch.points) {
+  const size_t stride=std::max<size_t>(1,(batch.points.size()+4095)/4096);
+  for (size_t i=sequence%stride;i<batch.points.size();i+=stride) {
+    const auto& p=batch.points[i];
     if (!first) out << ','; first = false;
     out << '[' << p[0] << ',' << p[1] << ',' << p[2] << ']';
   }
@@ -72,14 +75,17 @@ void emit(const Batch& batch, const char* source, unsigned long long sequence) {
 int main(int argc, char** argv) {
   ros::init(argc, argv, "webCloudViewer", ros::init_options::AnonymousName);
   ros::NodeHandle nh;
+  const std::string source=argc==2?argv[1]:"";
+  if(source!="raw"&&source!="aggregate")return 2;
   Batch aggregate, raw;
   // Retain the latest raw message, parsing it only at the 1 Hz delivery rate.
   sensor_msgs::PointCloud2ConstPtr latestRaw;
   unsigned long long sequence = 0;
   auto lastCloudAt = ros::WallTime::now();
-  auto worldSub = nh.subscribe<sensor_msgs::PointCloud2>("/cloud_registered", 50,
+  ros::Subscriber worldSub,rawSub;
+  if(source=="aggregate")worldSub = nh.subscribe<sensor_msgs::PointCloud2>("/cloud_registered", 5,
       [&](const sensor_msgs::PointCloud2ConstPtr& msg) { lastCloudAt = ros::WallTime::now(); append(*msg, aggregate); }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
-  auto rawSub = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1,
+  if(source=="raw")rawSub = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_points", 1,
       [&](const sensor_msgs::PointCloud2ConstPtr& msg) { lastCloudAt = ros::WallTime::now(); latestRaw = msg; }, ros::VoidConstPtr(), ros::TransportHints().tcpNoDelay());
   auto timer = nh.createWallTimer(ros::WallDuration(1), [&](const ros::WallTimerEvent&) {
     // An experiment may restart roscore. Reconnect instead of retaining orphaned subscriptions.

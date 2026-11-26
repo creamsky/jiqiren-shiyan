@@ -3,7 +3,7 @@ import * as THREE from '/vendor/three.module.min.js';
 const $=id=>document.getElementById(id),canvas=$('cloudCanvas');
 let renderer;
 try {renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true,powerPreference:'high-performance'});}
-catch(error){$('sceneEmpty').querySelector('h2').textContent='三维渲染不可用';$('sceneEmpty').querySelector('p').textContent='请在浏览器中启用图形加速后刷新';throw error;}
+catch(error){$('sceneEmpty').querySelector('h2').textContent='三维渲染不可用';$('sceneEmpty').querySelector('p').textContent='请在浏览器中启用图形加速后刷新';$('goalHint').textContent='请在浏览器中启用图形加速后再选点';throw error;}
 renderer.setPixelRatio(Math.min(devicePixelRatio||1,2));renderer.setClearColor(0xe1eaec,0);
 const scene=new THREE.Scene();scene.fog=new THREE.FogExp2(0xe1eaec,.018);
 const camera=new THREE.PerspectiveCamera(46,1,.05,500);camera.up.set(0,0,1);
@@ -11,21 +11,23 @@ const overhead=new THREE.OrthographicCamera(-10,10,10,-10,.05,500);overhead.up.s
 let topView=false,visibleWidth=1,viewportWidth=1,viewportHeight=1;
 const target=new THREE.Vector3();let azimuth=-2.3,elevation=.72,distance=30,follow=true,drag=null;
 let cloud={points:[],frame:'',age:null},trajectory={positions:[],pose:null,age:null},cloudAt=0,poseAt=0;
-let colorMode='distance',poseStamp=null,cloudStamp=null,poseEpoch=null,cloudSource='live';
-let mapId='',mapCount=0,removedCursor=0,groundCount=0;
-const pointCount=()=>cloudSource==='map'?Math.min(mapCount,cloud.active??mapCount):cloud.points.length;
+let colorMode='distance',lastTrailEnd=null,cloudStamp=null,poseEpoch=null,cloudSource='live';
+let mapId='',mapCount=0,removedCursor=0,groundCount=0,noiseCount=0,groundClassAt=null,sourceRevision=0;
+const usesMap=(source=cloudSource)=>source==='map'||source==='overlay';
+const pointCount=()=>usesMap()?Math.min(mapCount,cloud.active??mapCount):cloud.points.length;
 let geometry=new THREE.BufferGeometry(),pointBuffer=new THREE.Float32BufferAttribute(new Float32Array(32768*3),3);
 // The point object spans the entire mapped space and is never frustum-culled.
 // A fixed sorting center keeps erased (NaN) slots out of Three's bounds calculation.
 geometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(),0);
-let surfaceBuffer=new THREE.Uint8BufferAttribute(new Uint8Array(pointBuffer.count),1),enhanced=true,lastGroundPose=null;
+let surfaceBuffer=new THREE.Uint8BufferAttribute(new Uint8Array(pointBuffer.count),1),enhanced=false,lastGroundPose=null,needsGround=true;
+try{enhanced=localStorage.getItem('robot-obstacle-enhancement')==='on';}catch{}
 surfaceBuffer.setUsage(THREE.DynamicDrawUsage);geometry.setAttribute('surfaceKind',surfaceBuffer);
 pointBuffer.setUsage(THREE.DynamicDrawUsage);geometry.setAttribute('position',pointBuffer);geometry.setDrawRange(0,0);
 const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,uniforms:{pointSize:{value:2},pixelRatio:{value:renderer.getPixelRatio()},opacity:{value:1},radius:{value:15},center:{value:new THREE.Vector3()},heightBase:{value:0},singleColor:{value:false},lightTheme:{value:true}},
   vertexShader:`
     uniform float pointSize, pixelRatio;
     uniform vec3 center;
-    uniform bool enhance;
+    uniform bool enhance, scanLayer;
     attribute float surfaceKind;
     varying float kind, radial, range;
     void main(){
@@ -34,17 +36,20 @@ const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,unifo
       vec4 eye=modelViewMatrix*vec4(position,1.0); gl_Position=projectionMatrix*eye;
       float scale=clamp(18.0/max(4.0,-eye.z),0.65,2.2);
       if(enhance)scale*=kind==2.0?2.8:kind==3.0?1.55:kind==1.0||kind==4.0?0.7:1.2;
-      gl_PointSize=max(1.0,pointSize*pixelRatio*scale);
+      gl_PointSize=max(1.0,pointSize*pixelRatio*scale*(scanLayer?1.2:1.0));
     }`,
   fragmentShader:`
-    uniform bool clipRange, singleColor, lightTheme, enhance, overheadView, hideGround;
+    uniform bool clipRange, singleColor, lightTheme, enhance, overheadView, hideGround, scanLayer;
     uniform float opacity, radius;
     varying float kind, radial, range;
     void main(){
       float d=length(gl_PointCoord-0.5);
-      if(d>0.5||(clipRange&&radial>radius)||(hideGround&&kind==1.0))discard;
+      if(d>0.5||(clipRange&&radial>radius)||(hideGround&&(kind==1.0||kind==5.0)))discard;
       vec3 color; float alpha=opacity;
-      if(enhance){
+      if(scanLayer){
+        color=lightTheme?vec3(.36,.19,.69):vec3(.72,.59,1.0);
+        if(enhance&&(kind==1.0||kind==4.0))alpha*=.28;
+      }else if(enhance){
         color=lightTheme?vec3(.25,.38,.43):vec3(.48,.66,.71);
         if(kind==1.0){alpha*=.12;}
         else if(kind==2.0){color=lightTheme?vec3(.79,.26,.035):vec3(1.0,.64,.20);}
@@ -62,6 +67,24 @@ const material=new THREE.ShaderMaterial({transparent:true,depthWrite:false,unifo
 const points=new THREE.Points(geometry,material);points.frustumCulled=false;scene.add(points);
 material.uniforms.clipRange={value:true};
 material.uniforms.enhance={value:false};material.uniforms.overheadView={value:false};material.uniforms.hideGround={value:false};
+material.uniforms.scanLayer={value:false};
+const scanGeometry=new THREE.BufferGeometry(),scanPositions=new THREE.Float32BufferAttribute(new Float32Array(8000*3),3);
+const scanKinds=new THREE.Uint8BufferAttribute(new Uint8Array(scanPositions.count),1);
+scanGeometry.setAttribute('position',scanPositions.setUsage(THREE.DynamicDrawUsage));
+scanGeometry.setAttribute('surfaceKind',scanKinds.setUsage(THREE.DynamicDrawUsage));scanGeometry.setDrawRange(0,0);
+scanGeometry.boundingSphere=new THREE.Sphere(new THREE.Vector3(),0);
+const scanMaterial=material.clone();
+for(const key of ['pointSize','pixelRatio','radius','center','lightTheme','enhance','overheadView','hideGround'])scanMaterial.uniforms[key]=material.uniforms[key];
+scanMaterial.uniforms.scanLayer.value=true;
+const scanPoints=new THREE.Points(scanGeometry,scanMaterial);
+scanPoints.frustumCulled=false;scanPoints.renderOrder=1;scanPoints.visible=false;scene.add(scanPoints);
+let scan=null,scanAt=0,scanCount=0;
+function updateScanClasses(){
+  if(scan&&groundClassAt&&sameMap(scan,cloud)){
+    for(let i=0;i<scanCount;i++)scanKinds.array[i]=groundClassAt(scanPositions.getX(i),scanPositions.getY(i),scanPositions.getZ(i));
+  }else scanKinds.array.fill(0,0,scanCount);
+  scanKinds.needsUpdate=true;
+}
 function resizeCloudBuffer(count){
   if(count<=pointBuffer.count)return;
   const size=2**Math.ceil(Math.log2(count)),old=pointBuffer.array;
@@ -72,22 +95,36 @@ function resizeCloudBuffer(count){
   surfaceBuffer.setUsage(THREE.DynamicDrawUsage);geometry.setAttribute('surfaceKind',surfaceBuffer);points.geometry=geometry;
 }
 function updateSurfaceClasses(){
-  if(!trajectory.position||trajectory.frame!==cloud.frame)return;
-  window.classifyMazeCloud(pointBuffer.array,mapCount,trajectory.position,surfaceBuffer.array);
-  groundCount=0;
-  for(let i=0;i<mapCount;i++)if(surfaceBuffer.array[i]===1)groundCount++;
-  surfaceBuffer.needsUpdate=true;lastGroundPose=trajectory.position.slice();
+  const count=usesMap()?mapCount:cloud.points.length;
+  if(!count||!trajectory.position||!alignedCloud()||typeof window.classifyGround!=='function')return;
+  groundClassAt=window.classifyGround(pointBuffer.array,count,trajectory.position,surfaceBuffer.array);
+  groundCount=noiseCount=0;
+  for(let i=0;i<count;i++){
+    if(surfaceBuffer.array[i]===1)groundCount++;
+    else if(surfaceBuffer.array[i]===5)noiseCount++;
+  }
+  overlayData=null;
+  surfaceBuffer.needsUpdate=true;lastGroundPose=trajectory.position.slice();needsGround=false;
+  updateScanClasses();
 }
-function styleMap(){
-  const map=cloudSource==='map',on=map&&enhanced;
+function styleCloud(){
+  const filter=cloudSource!=='raw'&&!gridOpen();
+  const registered=filter&&cloud.registered===true;
+  const on=registered&&enhanced;
   material.uniforms.enhance.value=on;
-  material.uniforms.hideGround.value=map&&!$('showGround').checked;
-  $('groundSetting').hidden=!map;
-  $('mapEnhance').hidden=!map;setActive('mapEnhance',enhanced);
+  material.uniforms.hideGround.value=registered&&!$('showGround').checked;
+  $('groundSetting').hidden=$('enhanceSetting').hidden=!filter;$('mapEnhance').checked=enhanced;
+  $('scanLegend').hidden=cloudSource!=='overlay';
+  $('distanceLegend').lastChild.textContent=usesMap()?'累计点云':'激光点云';
   $('surfaceLegend').hidden=!on;$('distanceLegend').hidden=on;
 }
-$('mapEnhance').onclick=()=>{enhanced=!enhanced;styleMap();};
-$('showGround').onchange=styleMap;
+function setEnhancement(on){
+  enhanced=on;
+  try{localStorage.setItem('robot-obstacle-enhancement',on?'on':'off');}catch{}
+  styleCloud();
+}
+$('mapEnhance').onchange=()=>setEnhancement($('mapEnhance').checked);
+$('showGround').onchange=()=>{overlayData=null;styleCloud();};
 const grid=new THREE.GridHelper(200,200,0x68868b,0x92a8aa);grid.rotation.x=Math.PI/2;grid.material.transparent=true;grid.material.opacity=.25;scene.add(grid);
 function applyTheme(){const dark=document.documentElement.dataset.theme==='dark';scene.fog.color.setHex(dark?0x10151c:0xe1eaec);grid.material.opacity=dark?.18:.22;material.uniforms.lightTheme.value=!dark;}
 document.addEventListener('themechange',applyTheme);applyTheme();
@@ -118,12 +155,18 @@ mazeLayer.add(exitMarker,hintMarker);
 let overlayData=null;
 function overlay(data,aligned){
   mazeLayer.visible=!!data&&aligned&&data.generation===mapGeneration;
-  nearby.visible=mazeLayer.visible&&cloudSource==='map'&&enhanced&&window.MazeView?.freshReturns();
+  nearby.visible=mazeLayer.visible&&usesMap()&&enhanced&&window.MazeView?.freshReturns();
   if(!mazeLayer.visible)return;
   mazeLayer.position.z=(trajectory.position?.[2]||0)+.04;
   if(data===overlayData)return;overlayData=data;
-  const recent=data.nearReturns||[],count=Math.min(recent.length,nearbyPositions.count);
-  for(let i=0;i<count;i++)nearbyPositions.setXYZ(i,...recent[i]);
+  let count=0;
+  for(const p of data.nearReturns||[]){
+    if(count>=nearbyPositions.count)break;
+    if(material.uniforms.hideGround.value&&groundClassAt){
+      const kind=groundClassAt(...p);if(kind===1||kind===5)continue;
+    }
+    nearbyPositions.setXYZ(count++,...p);
+  }
   nearbyPositions.needsUpdate=true;nearbyGeometry.setDrawRange(0,count);
   for(const [line,xy] of [[planned,data.route],[driven,data.trail]]){
     line.geometry.dispose();line.geometry=new THREE.BufferGeometry().setFromPoints(xy.map(([x,y])=>new THREE.Vector3(x,y,0)));
@@ -132,39 +175,70 @@ function overlay(data,aligned){
     marker.visible=!!p;if(p)marker.position.set(p[0],p[1],.03);
   }
 }
-const goalPanel=document.createElement('div');goalPanel.className='field';
-goalPanel.innerHTML='<label>导航终点 · SLAM 坐标（m）</label><div class="number-control"><input id="goalX" type="number" step="0.01" placeholder="X" aria-label="终点 X"><input id="goalY" type="number" step="0.01" placeholder="Y" aria-label="终点 Y"></div><button id="pickGoal" class="secondary" type="button">在左侧点云选终点</button><p id="goalHint" class="subtle" role="status">准备实验后选点，再点击开始实验</p>';
-$('taskParameters').after(goalPanel);
+const goalButtons=[$('pickGoal'),$('mapPickGoal')];
+const navigationSelected=()=>$('experiment').value==='lab3-xy';
 let picking=false,goalFrame='',goalEpoch=null;
-let mapGeneration='',preparingMap=false;
-window.NavigationMap=(generation,preparing)=>{
-  if((generation && generation!==mapGeneration) || (preparing && !preparingMap)){
-    goalFrame='';goalEpoch=null;picking=false;goalMarker.visible=false;canvas.style.cursor='';
-    $('goalX').value='';$('goalY').value='';$('pickGoal').textContent='在左侧点云选终点';
-    $('goalHint').textContent='请在本轮准备完成后的新地图上选取终点';
+let mapGeneration='',preparingMap=false,goalRound=null,canPickGoal=false;
+function setPicking(active){
+  picking=active;canvas.style.cursor=active?'crosshair':'';
+  for(const button of goalButtons){
+    button.textContent=active?'取消选点':'在地图上选点';
+    button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));
   }
-  if(generation)mapGeneration=generation;
-  preparingMap=preparing;
+}
+function goalHint(text,showOnMap=false){
+  $('goalHint').textContent=$('mapGoalHint').textContent=text;
+  $('mapGoalHint').hidden=!showOnMap;
+}
+function clearGoal(text){
+  goalFrame='';goalEpoch=null;goalMarker.visible=false;setPicking(false);
+  $('goalX').value=$('goalY').value='';goalHint(text);
+}
+window.NavigationMap=(generation,preparing,round,ready)=>{
+  generation=generation||'';
+  round=round||null;
+  if(generation!==mapGeneration || (preparing && !preparingMap) || round!==goalRound)clearGoal('请在本轮准备完成后的地图上选取终点');
+  else if(picking&&!ready)setPicking(false);
+  mapGeneration=generation;goalRound=round;preparingMap=preparing;canPickGoal=ready;
 };
 document.addEventListener('control-mode-reset',()=>{
-  picking=false;goalFrame='';goalEpoch=null;goalMarker.visible=false;canvas.style.cursor='';
-  $('goalX').value='';$('goalY').value='';$('pickGoal').textContent='在左侧点云选终点';
-  $('goalHint').textContent='已切换控制目标，进入真机任务后请重新选点';
+  canPickGoal=false;clearGoal('已切换控制目标，进入真机任务后请重新选点');
 });
-const currentMap=()=>!preparingMap&&(!mapGeneration||Math.min(cloud.stamp,trajectory.stamp)>=Number(mapGeneration)*1e-9);
-const alignedCloud=()=>cloud.registered===true&&!!trajectory.frame&&cloud.frame===trajectory.frame&&currentMap();
-const cloudLimit=()=>cloudSource==='live'?.5:3;
-const goalReady=()=>trajectory.connected&&age(trajectory.age,poseAt)<.5&&trajectory.position&&cloud.connected&&age(cloud.age,cloudAt)<cloudLimit()&&alignedCloud();
+$('experiment').addEventListener('change',()=>{
+  if(!navigationSelected()){setPicking(false);$('mapGoalHint').hidden=true;}
+});
+const sameMap=(a,b)=>!!a.generation&&a.generation===b.generation&&a.epoch===b.epoch&&!!a.frame&&a.frame===b.frame;
+const currentStamp=stamp=>!/^\d{18,19}$/.test(mapGeneration)||stamp>=Number(mapGeneration)*1e-9;
+const currentCloud=sample=>!preparingMap&&currentStamp(sample.stamp)&&(!sample.generation||sameMap(sample,trajectory));
+const alignedCloud=()=>cloud.registered===true&&!!trajectory.frame&&cloud.frame===trajectory.frame&&currentStamp(trajectory.stamp)&&currentCloud(cloud);
+const cloudLimit=()=>cloudSource==='live'?2:3;
+const scanReady=()=>cloudSource==='overlay'&&!gridOpen()&&!!scan&&scanCount>0&&scan.connected&&age(scan.age,scanAt)<.5&&
+  trajectory.connected&&age(trajectory.age,poseAt)<.5&&Math.abs(scan.stamp-trajectory.stamp)<=.5&&
+  scan.registered&&alignedCloud()&&sameMap(scan,cloud)&&currentStamp(scan.stamp);
+const goalReady=()=>canPickGoal&&trajectory.connected&&age(trajectory.age,poseAt)<.5&&trajectory.position&&cloud.connected&&age(cloud.age,cloudAt)<cloudLimit()&&alignedCloud();
 function setGoal(x,y){
+  if(!canPickGoal)throw Error('请先完成实验三扩展的准备');
   if(!goalReady())throw Error('请等待新鲜的定位与已配准点云，不可在原始雷达坐标中选点');
   if(!Number.isFinite(x)||!Number.isFinite(y)||Math.hypot(x-trajectory.position[0],y-trajectory.position[1])>30)throw Error('终点须在当前位置 30 m 内');
   goalFrame=trajectory.frame;goalEpoch=trajectory.epoch;
   $('goalX').value=x.toFixed(2);$('goalY').value=y.toFixed(2);
   goalMarker.position.set(x,y,trajectory.position[2]);goalMarker.visible=true;
-  $('goalHint').textContent=`终点 (${x.toFixed(2)}, ${y.toFixed(2)}) · ${goalFrame}，点击开始实验执行`;
+  goalHint(`已选终点 (${x.toFixed(2)}, ${y.toFixed(2)}) m · 点击开始实验执行`,true);
 }
-$('pickGoal').onclick=()=>{picking=!picking;if(picking)view(true);$('pickGoal').textContent=picking?'请点击左侧空闲地面（再次点击取消）':'在左侧点云选终点';canvas.style.cursor=picking?'crosshair':'';};
-for(const id of ['goalX','goalY'])$(id).addEventListener('change',()=>{try{if($('goalX').value!==''&&$('goalY').value!=='')setGoal(Number($('goalX').value),Number($('goalY').value));}catch(error){goalFrame='';goalMarker.visible=false;$('goalHint').textContent=error.message;}});
+function togglePicking(){
+  if(picking){setPicking(false);goalHint('已取消本次地图选点',true);return;}
+  if(!canPickGoal){goalHint('请先连接真机并完成「准备实验」',true);return;}
+  if(cloudSource==='raw'||gridOpen())window.PointCloudView.select('live');
+  view(true);setPicking(true);goalHint('请点击地图中的空闲地面',true);
+}
+for(const button of goalButtons){button.disabled=false;button.onclick=togglePicking;}
+document.addEventListener('keydown',event=>{if(picking&&event.key==='Escape')togglePicking();});
+for(const id of ['goalX','goalY'])$(id).addEventListener('change',()=>{
+  goalFrame='';goalEpoch=null;goalMarker.visible=false;
+  try{if($('goalX').value!==''&&$('goalY').value!==''){setGoal(Number($('goalX').value),Number($('goalY').value));setPicking(false);}}
+  catch(error){goalHint(error.message);}
+});
+window.hasNavigationGoal=()=>Boolean(goalFrame&&goalEpoch===trajectory.epoch&&goalFrame===trajectory.frame);
 window.NavigationGoal=()=>{
   if(!goalFrame)return {};
   if($('goalX').value===''||$('goalY').value==='')throw Error('请输入完整的 X、Y 坐标');
@@ -178,10 +252,10 @@ canvas.addEventListener('pointerdown',e=>{
     const rect=canvas.getBoundingClientRect(),ray=new THREE.Raycaster(),hit=new THREE.Vector3();
     ray.setFromCamera(new THREE.Vector2((e.clientX-rect.left)/rect.width*2-1,1-(e.clientY-rect.top)/rect.height*2),topView?overhead:camera);
     if(!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0,0,1),-trajectory.position[2]),hit))throw Error('无法选取地面，请使用俯视图');
-    setGoal(hit.x,hit.y);picking=false;canvas.style.cursor='';$('pickGoal').textContent='在左侧点云选终点';
-  }catch(error){$('goalHint').textContent=error.message;}
+    setGoal(hit.x,hit.y);setPicking(false);
+  }catch(error){goalHint(error.message,true);}
 },true);
-function setActive(id,value){$(id).classList.toggle('active',value);$(id).setAttribute('aria-pressed',String(value));}
+function setActive(id,value){const b=$(id);b.classList.toggle('active',value);if(b.getAttribute('aria-pressed')!==String(value))b.setAttribute('aria-pressed',String(value));}
 function setFollow(value){follow=value;setActive('followRobot',value);}
 function view(top=false){topView=top;material.uniforms.overheadView.value=top;azimuth=top?-Math.PI/2:-2.3;elevation=top?Math.PI/2-.001:.72;setActive('viewTop',top);setActive('view3d',!top);}
 function resize(){
@@ -191,9 +265,28 @@ function resize(){
   renderer.setSize(w,h,false);camera.setViewOffset(w,h,(w-visibleWidth)/2,0,w,h);
 }
 new ResizeObserver(resize).observe(canvas);resize();
-$('view3d').onclick=()=>view();$('viewTop').onclick=()=>view(true);$('viewReset').onclick=()=>{target.set(0,0,0);distance=Number($('cloudRange').value)*2;setFollow(true);view();};$('followRobot').onclick=()=>setFollow(!follow);
+const gridOpen=()=>document.querySelector('.scene').dataset.surface==='grid';
+window.syncCloudControls=()=>{
+  const grid=gridOpen();
+  setActive('viewTop',grid||topView);setActive('view3d',!grid&&!topView);
+  setActive('followRobot',grid?!!window.MazeView?.gridFollowing():follow);
+};
+function chooseView(top){
+  if(gridOpen())window.PointCloudView.select('map');
+  view(top);
+}
+$('view3d').onclick=()=>chooseView(false);$('viewTop').onclick=()=>chooseView(true);
+$('viewReset').onclick=()=>{
+  if(gridOpen()){window.MazeView.gridView('fit');return;}
+  target.set(0,0,0);distance=Number($('cloudRange').value)*2;setFollow(true);view();
+};
+$('followRobot').onclick=()=>{
+  if(gridOpen())window.MazeView.gridView(window.MazeView.gridFollowing()?'pan':'follow');
+  else setFollow(!follow);
+};
 $('cloudMapFit').onclick=()=>{
-  if(!mapCount||cloudSource!=='map')return;
+  if(gridOpen()){window.MazeView.gridView('fit');return;}
+  if(!mapCount||!usesMap()||!currentCloud(cloud))return;
   const box=new THREE.Box3(),point=new THREE.Vector3();
   for(let i=0;i<mapCount;i++)if(Number.isFinite(pointBuffer.getX(i)))box.expandByPoint(point.fromBufferAttribute(pointBuffer,i));
   if(box.isEmpty())return;
@@ -204,19 +297,23 @@ $('cloudRange').addEventListener('input',()=>{const value=Number($('cloudRange')
 $('pointSize').addEventListener('input',()=>{const n=Number($('pointSize').value);if(n>=1&&n<=6)material.uniforms.pointSize.value=n;});
 document.querySelectorAll('[data-color]').forEach(b=>b.onclick=()=>{
   colorMode=b.dataset.color;material.uniforms.singleColor.value=colorMode==='mono';
-  if(cloudSource==='map'){enhanced=false;styleMap();}
+  if(material.uniforms.enhance.value)setEnhancement(false);
   document.querySelectorAll('[data-color]').forEach(other=>{other.classList.toggle('active',other===b);other.setAttribute('aria-pressed',String(other===b));});
 });
 function setSource(name){
-  if(cloudSource===name)return;
-  cloudSource=name;cloudStamp=null;mapId='';mapCount=removedCursor=groundCount=0;cloud={points:[],frame:'',age:null};geometry.setDrawRange(0,0);
-  lastGroundPose=null;styleMap();
-  material.uniforms.clipRange.value=name!=='map';
-  document.querySelectorAll('[data-cloud-source]').forEach(other=>{const active=other.dataset.cloudSource===name;other.classList.toggle('active',active);other.setAttribute('aria-pressed',String(active));});
-  $('cloudSourceHint').textContent=name==='map'?'本轮 SLAM 已配准的三维累计点云':name==='live'?'最新配准扫描 · 最多显示 1600 点':name==='aggregate'?'已配准点云 · 最近一秒的完整各帧':'雷达原始单帧 · 全部有效 XYZ 点';labels();
+  if(name!=='grid'&&name!==cloudSource){
+    if(!usesMap(name)||!usesMap()){
+      sourceRevision++;cloudStamp=null;mapId='';mapCount=removedCursor=groundCount=noiseCount=0;
+      cloud={points:[],frame:'',age:null};geometry.setDrawRange(0,0);
+      lastGroundPose=null;groundClassAt=null;needsGround=true;
+    }
+    scan=null;scanCount=0;scanGeometry.setDrawRange(0,0);
+    cloudSource=name;
+  }
+  material.uniforms.clipRange.value=!usesMap();
+  styleCloud();window.syncCloudControls();labels();
 }
-window.RobotCloudView=setSource;
-document.querySelectorAll('[data-cloud-source]').forEach(b=>b.onclick=()=>{window.MazeView?.showSurface('live');setSource(b.dataset.cloudSource);});
+document.addEventListener('cloud-view-change',event=>setSource(event.detail));
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 canvas.onpointerdown=e=>{drag={id:e.pointerId,x:e.clientX,y:e.clientY,pan:e.button===2||e.shiftKey};canvas.setPointerCapture(e.pointerId);};
 canvas.onpointermove=e=>{if(!drag||drag.id!==e.pointerId)return;const dx=e.clientX-drag.x,dy=e.clientY-drag.y;drag.x=e.clientX;drag.y=e.clientY;
@@ -234,12 +331,13 @@ function updateTrail(){
 }
 const age=(value,at)=>Number.isFinite(value)?value+(performance.now()-at)/1000:Infinity;
 function render(){
-  requestAnimationFrame(render);if(document.hidden)return;
+  requestAnimationFrame(render);if(document.hidden||gridOpen())return;
   const cloudAge=age(cloud.age,cloudAt),poseAge=age(trajectory.age,poseAt);
   const freshPose=trajectory.connected&&poseAge<1&&trajectory.position;
   // Raw lidar points have no world transform. Never silently overlay odometry.
   const aligned=alignedCloud();
-  const poseOnly=!pointCount();
+  goalMarker.visible=navigationSelected()&&aligned&&window.hasNavigationGoal();
+  const poseOnly=!pointCount()||usesMap()&&!aligned;
   const mazeData=window.MazeView?.data();overlay(mazeData,aligned);
   robot.visible=!!freshPose&&(aligned||poseOnly);
   trail.visible=!mazeLayer.visible&&$('showTrail').checked&&(aligned||poseOnly)&&trajectory.positions?.length>1;
@@ -248,8 +346,10 @@ function render(){
   if(robot.visible){robot.position.fromArray(trajectory.position);robot.quaternion.fromArray(trajectory.quaternion);if(follow)target.copy(robot.position);}
   if(aligned&&trajectory.position)material.uniforms.center.value.fromArray(trajectory.position);else material.uniforms.center.value.set(0,0,0);
   material.uniforms.heightBase.value=aligned&&trajectory.position?trajectory.position[2]:0;
-  points.visible=!cloud.registered||(!preparingMap&&(!mapGeneration||cloud.stamp>=Number(mapGeneration)*1e-9));
-  material.uniforms.opacity.value=cloud.connected&&cloudAge<cloudLimit()?.95:cloudSource==='map'?.65:.16;
+  points.visible=!cloud.registered||currentCloud(cloud);
+  scanPoints.visible=scanReady();
+  const opacity=cloud.connected&&cloudAge<cloudLimit()?.95:usesMap()?.65:.16;
+  material.uniforms.opacity.value=scanPoints.visible?opacity*.58:opacity;
   if(!aligned&&!poseOnly&&follow)target.set(0,0,0);
   grid.visible=$('showGrid').checked;grid.position.set(Math.round(target.x/10)*10,Math.round(target.y/10)*10,-.03);
   if(topView){
@@ -263,60 +363,102 @@ function render(){
   }
 }
 function labels(){
-  goalPanel.hidden=$('experiment').value!=='lab3-xy';
-  if(goalFrame&&(goalFrame!==trajectory.frame||goalEpoch!==trajectory.epoch)){goalFrame='';goalMarker.visible=false;$('goalHint').textContent='定位坐标已重置，请重新选终点';}
+  if(goalFrame&&(goalFrame!==trajectory.frame||goalEpoch!==trajectory.epoch))clearGoal('定位坐标已重置，请重新选终点');
   const ca=age(cloud.age,cloudAt),pa=age(trajectory.age,poseAt),aligned=alignedCloud();
-  $('sceneEmpty').hidden=pointCount()>0||(cloudSource!=='map'&&!!trajectory.position);
-  const count=pointCount(),hidden=material.uniforms.hideGround.value?Math.min(groundCount,count):0;
+  const count=cloud.registered&&!currentCloud(cloud)?0:pointCount();
+  const hasScan=scanReady(),hidden=material.uniforms.hideGround.value?Math.min(groundCount+noiseCount,count):0;
+  $('sceneEmpty').hidden=count>0||hasScan||(!usesMap()&&!!trajectory.position);
   $('nearLegend').hidden=!nearby.visible||nearbyGeometry.drawRange.count===0;
-  $('cloudCount').textContent=hidden?(count-hidden).toLocaleString()+' 可见 · '+hidden.toLocaleString()+' 地面已隐藏':count.toLocaleString()+' POINTS';
+  $('cloudCount').textContent=hidden?(count-hidden).toLocaleString()+' 可见 · '+hidden.toLocaleString()+' 已过滤':count.toLocaleString()+' POINTS';
+  $('cloudCount').title=hidden?'地面 '+groundCount+' 点，孤立地下回波 '+noiseCount+' 点':'';
   const source=cloud.source==='map'?`累计点云 · ${cloud.scans} 帧`:cloud.source==='aggregate'?`一秒聚合 · ${cloud.frames} 帧`:cloud.source==='preview'?'模拟预览':cloud.registered?'配准单帧':'原始单帧';
-  $('cloudStatus').textContent=!Number.isFinite(ca)?(cloud.error||'点云 · 等待数据'):`${source} · ${Math.round(ca*1000)} ms${ca>=cloudLimit()||!cloud.connected?' · 已过期':''}`;
+  const baseStatus=!Number.isFinite(ca)?(cloud.error||'点云 · 等待数据'):`${source} · ${Math.round(ca*1000)} ms${ca>=cloudLimit()||!cloud.connected?' · 已过期':''}`;
+  $('cloudStatus').textContent=cloudSource==='overlay'?`${baseStatus} · ${hasScan?'实时扫描已叠加':'等待同地图扫描'}`:baseStatus;
   $('poseStatus').textContent=!trajectory.connected?'定位 · 离线':!Number.isFinite(pa)?'定位 · 等待数据':`定位 · 收到后 ${Math.round(pa*1000)} ms${pa>=1?' · 已过期':''}`;
   $('cloudStatus').classList.toggle('stale',ca>=cloudLimit()&&pointCount()>0);$('poseStatus').classList.toggle('stale',pa>=1&&!!trajectory.pose);
   $('frameLabel').textContent=cloud.frame||trajectory.frame||'等待数据';
   $('alignmentStatus').textContent=aligned?`${cloud.frame} · 位姿与点云帧末相差 ${Math.round(1000*Math.abs(trajectory.stamp-cloud.stamp))} ms`:cloud.registered===false?'雷达自身坐标系，轨迹暂不叠加':'等待同一地图的点云与定位';
 }
 async function refreshCloud(){
-  const started=performance.now(),requested=cloudSource;
-  const url=requested==='map'?'/api/cloud-map?'+new URLSearchParams({id:mapId,from:String(mapCount),removed:String(removedCursor)}):requested==='live'?'/api/cloud':'/api/cloud?source='+requested;
+  const started=performance.now(),requested=usesMap()?'map':cloudSource,revision=sourceRevision;
+  const query=new URLSearchParams({brief:'1',seen:cloud.tag||''});
+  if(requested!=='live')query.set('source',requested);
+  const url=requested==='map'?'/api/cloud-map?'+new URLSearchParams({id:mapId,from:String(mapCount),removed:String(removedCursor)}):'/api/cloud?'+query;
   try{const r=await fetch(url,{signal:AbortSignal.timeout(requested==='live'?800:2500),cache:'no-store'});if(!r.ok)throw Error();const next=await r.json();
-    if(requested===cloudSource&&requested==='map'){
+    if(revision===sourceRevision&&requested==='map'){
       const first=next.id!==mapId;
-      if(first){mapCount=removedCursor=0;mapId=next.id;}
-      if(next.from!==mapCount||next.end-next.from>(first?65536:4096)||next.end<next.from)throw Error('累计点云分段已过期');
+      if(next.from!==(first?0:mapCount)||next.end-next.from>(first?65536:4096)||next.end<next.from)throw Error('累计点云分段已过期');
       const binary=atob(next.xyz),bytes=Uint8Array.from(binary,c=>c.charCodeAt(0));
       if(bytes.length!==(next.end-next.from)*12)throw Error('累计点云分段不完整');
       resizeCloudBuffer(next.end);
-      pointBuffer.array.set(new Float32Array(bytes.buffer),mapCount*3);
+      pointBuffer.array.set(new Float32Array(bytes.buffer),next.from*3);
+      if(first){mapId=next.id;groundCount=noiseCount=0;groundClassAt=null;lastGroundPose=null;surfaceBuffer.array.fill(0,0,next.end);surfaceBuffer.needsUpdate=true;}
       mapCount=next.end;
       for(const i of next.removed||[])if(i<mapCount)pointBuffer.setXYZ(i,NaN,NaN,NaN);
       removedCursor=next.removedEnd||0;
       if(bytes.length||next.removed?.length)pointBuffer.needsUpdate=true;
       geometry.setDrawRange(0,mapCount);cloudAt=started;cloud={...next,points:[]};
-      if(first||bytes.length||next.removed?.length||!lastGroundPose||trajectory.position&&trajectory.position.some((n,i)=>Math.abs(n-lastGroundPose[i])>.35))updateSurfaceClasses();
-    }else if(requested===cloudSource){
+      if(first||bytes.length||next.removed?.length||!lastGroundPose||trajectory.position?.some((n,i)=>Math.abs(n-lastGroundPose[i])>.35))needsGround=true;
+      styleCloud();
+      if(needsGround)updateSurfaceClasses();
+    }else if(revision===sourceRevision&&next.unchanged){
+      cloudAt=started;cloud.age=next.age;cloud.connected=next.connected;
+    }else if(revision===sourceRevision){
       if(!Array.isArray(next.points)||next.points.length>1000000)throw Error('点云数据超出显示容量');
       if(Number.isFinite(next.age)&&Number.isFinite(next.trajectory?.stamp)&&Number.isFinite(next.stamp)&&Number.isFinite(next.trajectory.age)){
         next.age=Math.max(next.age,next.trajectory.stamp-next.stamp+next.trajectory.age);
       }
-      cloudAt=started;const changed=next.stamp===null||next.stamp!==cloudStamp||next.frame!==cloud.frame||next.source!==cloud.source;cloud=next;cloudStamp=cloud.stamp;
+      cloudAt=started;const changed=next.stamp==null||next.stamp!==cloudStamp||next.frame!==cloud.frame||next.source!==cloud.source||next.generation!==cloud.generation||next.epoch!==cloud.epoch;cloud=next;cloudStamp=cloud.stamp;
       if(changed){const count=cloud.points.length;
         resizeCloudBuffer(count);
         for(let i=0;i<count;i++)pointBuffer.setXYZ(i,...cloud.points[i]);pointBuffer.needsUpdate=true;geometry.setDrawRange(0,count);
+        surfaceBuffer.array.fill(0,0,count);surfaceBuffer.needsUpdate=true;
+        groundCount=noiseCount=0;groundClassAt=null;needsGround=requested!=='raw'&&cloud.registered;
+        styleCloud();
+        if(needsGround)updateSurfaceClasses();
       }
     }
-  }catch(error){if(requested===cloudSource){cloud.connected=false;cloud.error=error.message||'点云连接中断';}}
+  }catch(error){if(revision===sourceRevision){cloud.connected=false;cloud.error=error.message||'点云连接中断';}}
   labels();
-  const period=cloudSource==='live'?100:1000;
+  // A returning tab can read a large existing map without waiting a second
+  // between every 4096-point chunk. Idle maps retain the usual polling rate.
+  const catchingUp=usesMap()&&cloud.connected&&(mapCount<cloud.count||removedCursor<cloud.removedCount);
+  const period=catchingUp?60:1000;
   setTimeout(refreshCloud,Math.max(0,period-(performance.now()-started)));
+}
+async function refreshScan(){
+  const started=performance.now();
+  if(cloudSource==='overlay'&&!gridOpen()){
+    try{
+      const response=await fetch('/api/cloud?'+new URLSearchParams({brief:'1',seen:scan?.tag||''}),{signal:AbortSignal.timeout(800),cache:'no-store'});
+      if(!response.ok)throw Error();
+      const next=await response.json();
+      if(cloudSource==='overlay'&&!gridOpen()&&next.unchanged&&scan){
+        scanAt=started;scan.age=next.age;scan.connected=next.connected;
+      }else if(cloudSource==='overlay'&&!gridOpen()&&!next.unchanged){
+        const changed=!scan||next.stamp!==scan.stamp||!sameMap(next,scan);
+        scan=next;scanAt=started;
+        if(changed){
+          scanCount=next.registered&&Number.isFinite(next.stamp)&&Array.isArray(next.points)?Math.min(next.points.length,scanPositions.count):0;
+          for(let i=0;i<scanCount;i++)scanPositions.setXYZ(i,...next.points[i]);
+          scanPositions.needsUpdate=true;scanGeometry.setDrawRange(0,scanCount);updateScanClasses();
+        }
+      }
+    }catch{scan=null;}
+    labels();
+  }
+  setTimeout(refreshScan,Math.max(0,1000-(performance.now()-started)));
 }
 async function refreshPose(){
   const started=performance.now();
-  try{const r=await fetch('/api/trajectory',{signal:AbortSignal.timeout(800),cache:'no-store'});if(!r.ok)throw Error();trajectory=await r.json();poseAt=started;
-    if(trajectory.stamp!==poseStamp||trajectory.epoch!==poseEpoch){poseStamp=trajectory.stamp;poseEpoch=trajectory.epoch;updateTrail();}
+  try{const q=new URLSearchParams({id:trajectory.id||'',from:String(trajectory.end||0)});
+    const r=await fetch('/api/trajectory?'+q,{signal:AbortSignal.timeout(800),cache:'no-store'});if(!r.ok)throw Error();
+    const next=await r.json();
+    if(next.reset===false){for(const key of ['points','positions'])next[key]=next[key].length?trajectory[key].concat(next[key]).slice(-2000):trajectory[key];}
+    trajectory=next;poseAt=started;
+    if(next.reset||next.end!==lastTrailEnd||trajectory.epoch!==poseEpoch){lastTrailEnd=next.end;poseEpoch=trajectory.epoch;updateTrail();}
+    if(needsGround)updateSurfaceClasses();
   }catch{trajectory.connected=false;}labels();setTimeout(refreshPose,Math.max(0,100-(performance.now()-started)));
 }
-setSource(document.querySelector('.scene').dataset.surface==='map'?'map':'live');
-styleMap();
-render();refreshCloud();refreshPose();
+setSource(document.querySelector('.scene').dataset.surface||'live');
+render();refreshCloud();refreshPose();refreshScan();

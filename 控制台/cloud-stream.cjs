@@ -5,7 +5,7 @@ const os=require('node:os');
 const robotAddress=require('./robot-address.cjs');
 
 class CloudStream {
-  constructor({run=spawn,now=Date.now}={}) {this.run=run;this.now=now;this.frames=new Map();this.child=null;this.retry=null;this.active=false;this.error='正在连接点云';}
+  constructor({run=spawn,now=Date.now,source=null}={}) {this.run=run;this.now=now;this.source=source;this.frames=new Map();this.child=null;this.retry=null;this.active=false;this.error='正在连接点云';}
   accept(line) {
     let data;try{data=JSON.parse(line);}catch{return false;}
     if(data?.type!=='cloud'||!['aggregate','raw'].includes(data.source)||!Number.isFinite(data.stamp)||
@@ -23,9 +23,9 @@ class CloudStream {
     if(!this.active)return;
     const key=path.join(os.homedir(),'.ssh','robot_lab_ed25519');
     const ssh=path.join(process.env.WINDIR||'C:\\Windows','System32','OpenSSH','ssh.exe');
-    const args=['-n','-T','-i',key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes',
+    const args=['-n','-T','-C','-i',key,'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes',
       '-o',`HostKeyAlias=${robotAddress.hostKeyAlias}`,'-o','ConnectTimeout=5','-o','ServerAliveInterval=3','-o','ServerAliveCountMax=2',
-      `nvidia@${robotAddress.address()}`,'source /home/nvidia/lab26/env.sh && exec nice -n 5 /home/nvidia/robot-lab-viewer/cloud-stream'];
+      `nvidia@${robotAddress.address()}`,'source /home/nvidia/lab26/env.sh && exec nice -n 5 /home/nvidia/robot-lab-viewer/'+(this.source?'cloud-preview '+this.source:'cloud-stream')];
     let buffer='';const child=this.run(ssh,args,{windowsHide:true,stdio:['ignore','pipe','pipe']});this.child=child;
     child.stdout.setEncoding('utf8');child.stdout.on('data',chunk=>{
       if(this.child!==child)return;
@@ -43,4 +43,19 @@ class CloudStream {
   }
   stop() {this.active=false;clearTimeout(this.retry);this.child?.kill();this.child=null;this.frames.clear();this.error='等待连接真机';}
 }
-module.exports={CloudStream};
+class CloudViews {
+  constructor(make=source=>new CloudStream({source})){
+    this.streams=new Map(['raw','aggregate'].map(source=>[source,make(source)]));this.timers=new Map();
+  }
+  snapshot(source,online){
+    const stream=this.streams.get(source);
+    if(online){
+      stream.start();clearTimeout(this.timers.get(source));
+      const idle=setTimeout(()=>{stream.stop();this.timers.delete(source);},3500);
+      idle.unref();this.timers.set(source,idle);
+    }
+    return stream.snapshot(source);
+  }
+  stop(){for(const timer of this.timers.values())clearTimeout(timer);this.timers.clear();for(const stream of this.streams.values())stream.stop();}
+}
+module.exports={CloudStream,CloudViews};

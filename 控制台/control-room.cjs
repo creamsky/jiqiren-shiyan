@@ -2,8 +2,8 @@ const crypto=require('node:crypto');
 
 // One room, one live lease. Tokens stay private; public IDs are display-only.
 class ControlRoom {
-  constructor({stop,stopped,connected,now=Date.now,leaseMs=1000}){
-    Object.assign(this,{stop,stopped,connected,now,leaseMs});
+  constructor({stop,stopped,connected,onboard=()=>false,canManageMoving=onboard,present=()=>false,now=Date.now,leaseMs=1000}){
+    Object.assign(this,{stop,stopped,connected,onboard,canManageMoving,present,now,leaseMs});
     this.sessions=new Map();this.owner=null;this.queue=[];this.events=[];
     this.barrier=null;this.pendingAdmin=null;this.offer=null;this.version=0;
   }
@@ -24,21 +24,27 @@ class ControlRoom {
     const s=this.sessions.get(token);for(const peer of this.sessions.values())if(peer.deviceId===s.deviceId&&peer.admin===s.admin)peer.name=clean;this.touch(token);return this.snapshot(token);
   }
   identified(token){if(!this.sessions.get(token)?.name)throw Error('请先填写昵称');}
-  valid(token,lease){return !!this.owner&&this.owner.token===token&&this.owner.lease===lease&&this.now()-this.owner.at<this.leaseMs&&!this.barrier;}
+  ownerPresent(){return this.present(this.owner.token)||this.now()<(this.owner.reconnectUntil||0)||this.now()-this.owner.at<this.leaseMs;}
+  valid(token,lease){return !!this.owner&&this.owner.token===token&&this.owner.lease===lease&&this.ownerPresent()&&!this.barrier;}
   grant(token){
     this.owner={token,lease:crypto.randomBytes(16).toString('hex'),at:this.now(),since:this.now()};
     this.queue=this.queue.filter(t=>t!==token);this.offer=null;
     this.event(`${this.person(token).name} 取得控制权`);
   }
-  beginStop(reason,{release=false,admin=null}={}){
+  beginStop(reason,{release=false,admin=null,keepReady=false}={}){
     if(release)this.owner=null;
     else if(this.owner)this.owner.lease=crypto.randomBytes(16).toString('hex');
     this.pendingAdmin=admin;this.offer=null;
     this.barrier={at:this.now(),reason,stableAt:null};
-    this.stop();
+    this.stop(keepReady);
   }
   disconnected(){
+    if(this.owner&&this.present(this.owner.token)){
+      if(!this.onboard())this.beginStop('机器人连接中断，等待停车确认',{keepReady:true});
+      return;
+    }
     if(this.owner)this.event(`${this.person(this.owner.token).name} 的控制因机器人断线而结束`);
+    if(this.onboard()){this.owner=null;this.offer=null;return;}
     this.beginStop('机器人连接中断，等待停车确认',{release:true});
   }
   claim(token){
@@ -47,7 +53,7 @@ class ControlRoom {
     if(this.barrier)throw Error('正在确认机器人停止，请稍候');
     if(this.owner){if(this.owner.token===token)return;throw Error('机器人正在使用，请加入排队');}
     if(this.queue.length&&this.queue[0]!==token)throw Error('请按排队顺序接手');
-    if(!this.stopped())throw Error('未确认机器人静止，暂不能取得控制权');
+    if(!this.canManageMoving()&&!this.stopped())throw Error('未确认机器人静止，暂不能取得控制权');
     this.grant(token);
   }
   enqueue(token){
@@ -60,13 +66,14 @@ class ControlRoom {
   release(token){
     if(this.owner?.token!==token)throw Error('你当前没有控制权');
     this.event(`${this.person(token).name} 结束控制`);
-    this.beginStop('结束控制，等待停车确认',{release:true});
+    if(this.onboard()){this.owner=null;return;}
+    this.beginStop('结束控制，等待停车确认',{release:true,keepReady:true});
   }
   takeover(token){
     if(!this.sessions.get(token)?.admin)throw Error('只有本机管理员可以接管');
     if(this.pendingAdmin===token)return;
     this.event(`${this.person(token).name} 发起管理员接管`);
-    this.cancel(token);this.beginStop('管理员接管，等待停车确认',{release:true,admin:token});
+    this.cancel(token);this.beginStop('管理员接管，等待停车确认',{release:true,admin:token,keepReady:true});
   }
   emergency(token){
     this.event(`${this.person(token)?.name||'访客'} 点击停车`);
@@ -79,12 +86,13 @@ class ControlRoom {
   }
   tick(){
     const now=this.now();
-    if(this.owner&&now-this.owner.at>=this.leaseMs){
+    if(this.owner&&!this.ownerPresent()){
       this.event(`${this.person(this.owner.token).name} 失联，已撤销控制权`);
-      this.beginStop('操作者失联，等待停车确认',{release:true});
+      if(this.onboard())this.owner=null;
+      else this.beginStop('操作者失联，等待停车确认',{release:true,keepReady:true});
     }
     this.queue=this.queue.filter(t=>this.sessions.has(t)&&now-this.sessions.get(t).seen<6500);
-    for(const [token,s] of this.sessions)if(now-s.seen>12*3600e3)this.sessions.delete(token);
+    for(const [token,s] of this.sessions)if(!this.present(token)&&now-s.seen>12*3600e3)this.sessions.delete(token);
     if(this.barrier){
       if(this.connected()&&this.stopped()&&now-this.barrier.at>=150){
         this.barrier.stableAt??=now;

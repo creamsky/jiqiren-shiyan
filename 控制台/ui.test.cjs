@@ -10,6 +10,19 @@ function page(){
   return {dom,window,document:window.document,ui:window.Workbench};
 }
 const registry=JSON.parse(fs.readFileSync(path.join(__dirname,'experiments.json'),'utf8'));
+test('experiment three extension exposes map picking in both the view dock and the task panel',()=>{
+  const {dom,document:d,ui}=page();
+  try{
+    ui.load(registry);
+    const button=d.querySelector('.view-dock #mapPickGoal'),panel=d.querySelector('.task-panel #navigationGoalPanel');
+    assert.ok(button.hidden&&panel.hidden);
+    ui.syncTask({experiment:'lab3-xy'});
+    assert.equal(button.hidden,false);assert.equal(panel.hidden,false);
+    assert.equal(button.textContent,'在地图上选点');
+    ui.syncTask({experiment:'lab3'});
+    assert.ok(button.hidden&&panel.hidden);
+  }finally{dom.window.close();}
+});
 test('experiment library scales past three tasks, searches, filters and selects config-driven entries',()=>{
   const {dom,window,document:d,ui}=page();
   try{

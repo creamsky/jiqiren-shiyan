@@ -11,12 +11,62 @@
 #include "basic_control/low_obstacles.h"
 #include "basic_control/clearing_rays.h"
 #include "basic_control/maze_guard.h"
+#include "basic_control/gap_roam.h"
 #include <iostream>
 #include <cstdlib>
 #include <stdexcept>
 void require(bool ok,const char* msg) { if(!ok) { std::cerr<<"FAIL: "<<msg<<std::endl;std::exit(1); } }
 void testRetreat(){
   using namespace lab26;
+  NearPlaneRays rays;
+  for(int i=0;i<360;i++){const double a=i*pi/180;rays.add(4*std::cos(a),4*std::sin(a),0.);}
+  const RayView view{&rays,0,0,0};
+  GapRoam straight,turn,reverse,unobserved;
+  require(straight.step({}, {},view,{}, {},1,.02,.18).v>0.,"Open observed corridor starts continuous travel");
+  GapRoam departing;Command departure{};
+  for(int i=0;i<60;++i){
+    auto next=departing.step({},{{-.37,0}},view,departure,departure,1+i*.02,.02,.18);
+    require(next.v>0.&&next.v>=departure.v&&next.w==0.,"Clear forward departure stays smooth near a rear return");
+    departure=next;
+  }
+  require(departure.v>.17,"Forward departure reaches cruise speed");
+  NearPlaneRays shortView;
+  for(int i=-32;i<=32;i++){const double a=i*pi/180;shortView.add(.72,.72*std::tan(a),0.);}
+  GapRoam crawl;Command lastCrawl{};
+  for(int i=0;i<100;i++){
+    auto cmd=crawl.step({}, {},{&shortView,0,0,0},{},lastCrawl,1+i*.02,.02,.18);
+    require(cmd.v>0.&&cmd.v>=lastCrawl.v&&cmd.w==0.,"Partial forward view permits continuous controlled exploration");
+    lastCrawl=cmd;
+  }
+  require(std::abs(lastCrawl.v-.08)<1e-6,"Short observed corridor limits cruise speed");
+  require(departing.step({},{{-.37,0},{.49,0}},view,departure,departure,2.2,.02,.18).v==0.,"Front obstruction still stops departure");
+  require(unobserved.step({}, {},{}, {}, {},1,.02,.18).v==0.,"Missing laser observations must hold position");
+  PassageMemory memory;memory.observe({});memory.observe({1.1,0,0});memory.observe({});
+  require(memory.visits({},0.)==2&&memory.visits({},pi/2)==0,"Returning from a dead end marks the used branch twice and leaves the side exit fresh");
+  std::vector<ObstaclePoint> endWall;
+  for(int i=-20;i<=20;i++)endWall.push_back({.83,.10*i});
+  for(int i=-30;i<=12;i++){endWall.push_back({.10*i,.72});endWall.push_back({.10*i,-.72});}
+  const auto pivot=turn.step({},endWall,view,{}, {},1,.02,.18);
+  require(pivot.v==0.&&pivot.w!=0.,"Dead end with turn space gives a stationary pivot");
+  endWall.push_back({0,.55});
+  const auto back=reverse.step({},endWall,view,{}, {},1,.02,.18);
+  require(back.v<0.&&back.w==0.,"Tight dead end backs along the observed rear corridor");
+  endWall.push_back({-.50,0});
+  require(reverse.step({},endWall,view,{},back,1.02,.02,.18).v==0.,"New rear obstruction cancels backing immediately");
+  // Closed loop, a vehicle facing the blind end must turn and leave along the aisle.
+  GapRoam returning;Pose vehicle{};Command last{};
+  endWall.resize(endWall.size()-2);
+  for(int i=0;i<850&&vehicle.x>-.8;i++){
+    std::vector<ObstaclePoint> body;
+    for(const auto& p:endWall){
+      const double x=p.x-vehicle.x,y=p.y-vehicle.y,c=std::cos(vehicle.yaw),s=std::sin(vehicle.yaw);
+      body.push_back({c*x+s*y,-s*x+c*y});
+    }
+    last=returning.step(vehicle,body,view,last,last,1+i*.02,.02,.18);
+    vehicle.x+=.02*last.v*std::cos(vehicle.yaw);vehicle.y+=.02*last.v*std::sin(vehicle.yaw);
+    vehicle.yaw+=.02*last.w;
+  }
+  require(vehicle.x<-.8&&std::abs(vehicle.y)<.28,"Pivot through the dead end and make measured forward progress back down the corridor");
   require(!mazeBrakeClear({{.50,.29}}, {.18,0}, .18), "Unseen cone base overlaps forward braking sweep");
   require(!mazeBrakeClear({{-.48,0}}, {-.10,0}, .18), "Cone base behind the wheels blocks reverse");
   require(mazeBrakeClear({{.5,.65},{.5,-.65}}, {.18,0}, .18), "Clear gate permits a straight passage");

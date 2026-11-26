@@ -9,6 +9,7 @@
 #include "basic_control/low_obstacles.h"
 #include "basic_control/clearing_rays.h"
 #include "basic_control/maze_guard.h"
+#include "basic_control/gap_roam.h"
 #include "basic_control/scan_alignment.h"
 #include <ros/ros.h>
 #include <ros/master.h>
@@ -27,6 +28,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
+#include <set>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -71,7 +73,7 @@ class Experiment {
     if (!dry) {
       lockfd=open("/tmp/lab26_can.lock",O_CREAT|O_RDWR,0600);
       if (lockfd<0 || flock(lockfd,LOCK_EX|LOCK_NB)<0) throw std::runtime_error("Another lab26 controller owns CAN");
-      if(!bindCan())throw std::runtime_error("Cannot bind can0 feedback socket");
+      if(!bindCan()&&!console_mode)throw std::runtime_error("Cannot bind can0 feedback socket");
     }
     bindRosIO();
     nh.getParam("/run_id",master_id);
@@ -80,7 +82,7 @@ class Experiment {
     ROS_INFO("Lab 2.6 ready: dry_run=%s, angle=%.1f deg, distance=%.2f m, v<=%.2f, w<=%.2f",dry?"true":"false",deg,cfg.distance,cfg.speed,cfg.max_w);
   }
   ~Experiment() {
-    if(canfd>=0) { for(int i=0;i<20;++i) { send({}); usleep(20000); } close(canfd); }
+    if(canfd>=0) { for(int i=0;i<20&&networkSelected();++i) { send({}); usleep(20000); } close(canfd); }
     if(lockfd>=0) close(lockfd);
   }
   int run() {
@@ -100,10 +102,15 @@ class Experiment {
       }
       if(console) {
         console->poll([&](const std::string& c) { command(c,t); });
-        if(!console->connected || t-last_heartbeat>0.4) { operator_pause=true; manual_cmd={}; }
-        if(console->connected) last_console_seen=t;
-        else if((last_console_seen>0&&t-last_console_seen>10)||
-                (last_console_seen<0&&t-console_started>60)) return 0;
+        if(!dry&&!controlPermitted(t)){
+          if(!operator_pause||manual)motion->stop("Chassis fault or control-mode change");
+          operator_pause=true;manual=false;manual_cmd={};previous_cmd={};
+        }
+        if(onboard_id.empty()&&(!console->connected || t-last_heartbeat>0.4)) { operator_pause=true; manual_cmd={}; }
+        if(!onboard_id.empty()&&motion->stage==lab26::Stage::Waiting){
+          if(t-pose_time>.5)motion->stop("Odometry timeout");
+          else if(t-cloud_time>.5)motion->stop("Lidar timeout");
+        }
       }
       if(!maze_leg.empty()&&!operator_pause&&!manual&&motion->stage!=lab26::Stage::Done&&motion->stage!=lab26::Stage::Fault){
         std::string current_generation;
@@ -154,7 +161,15 @@ class Experiment {
               motion->avoidance_points=lab3::reframe(avoid_points,{avoid_cloud_pose.x,avoid_cloud_pose.y,avoid_cloud_pose.yaw},{pose.x,pose.y,pose.yaw});
               motion->avoidance_previous=previous_cmd;
               motion->avoidance_feedback={feedback_v,feedback_w};
-              if(use_global_route&&motion->cfg.xy_goal&&motion->stage==lab26::Stage::Driving){
+              if(gap_roaming&&motion->stage!=lab26::Stage::Fault){
+                motion->stage=lab26::Stage::Driving;
+                low_obstacles.append(pose,motion->avoidance_points);
+                const double dx=ray_pose.x-pose.x,dy=ray_pose.y-pose.y;
+                const double c=std::cos(pose.yaw),s=std::sin(pose.yaw);
+                const lab26::RayView rays{&near_plane_rays,c*dx+s*dy,-s*dx+c*dy,ray_pose.yaw-pose.yaw};
+                cmd=gap_roam.step(pose,motion->avoidance_points,rays,{feedback_v,feedback_w},previous_cmd,t,dt,maze_extension);
+                motion->external_navigation=true;motion->external_state=gap_roam.state;
+              }else if(use_global_route&&motion->cfg.xy_goal&&motion->stage==lab26::Stage::Driving){
                 low_obstacles.append(pose,motion->avoidance_points);
                 front_gap=lab26::bumperClearance(motion->avoidance_points,0.);
                 rear_gap=lab26::bumperClearance(motion->avoidance_points,lab26::pi);
@@ -224,7 +239,7 @@ class Experiment {
       if((!motion->cfg.avoidance||manual)&&(cmd.v!=0||cmd.w!=0)&&!operator_pause&&!obstacle_pause&&
          motion->stage!=lab26::Stage::Fault&&motion->stage!=lab26::Stage::Done)
         cmd=lab26::rateLimit(cmd,previous_cmd,dt,manual?manual_linear_rate:linear_rate,angular_rate);
-      if(!dry){
+      if(!dry&&(!console_mode||networkSelected())){
         const auto sent=send(cmd);can_tx_retries+=sent.attempts>0?sent.attempts-1:0;
         if(!sent.ok()){
           last_can_tx_errno=sent.error;
@@ -240,7 +255,7 @@ class Experiment {
       geometry_msgs::Twist out; out.linear.x=cmd.v; out.angular.z=cmd.w; cmd_pub.publish(out);
       if(motion->stage!=last_stage) { ROS_INFO("STATE %s %s",motion->name(),motion->fault.c_str()); last_stage=motion->stage; }
       std_msgs::String status; status.data=std::string(motion->name())+" "+motion->fault; status_pub.publish(status);
-      if(++ticks%5==0 || motion->stage==lab26::Stage::Done || motion->stage==lab26::Stage::Fault) {
+      if(++ticks%5==0 || (!console_mode&&(motion->stage==lab26::Stage::Done || motion->stage==lab26::Stage::Fault))) {
         log<<ros::WallTime::now().toSec()<<','<<motion->name()<<','<<pose.x<<','<<pose.y<<','<<pose.yaw<<','<<motion->progress<<','<<motion->cross_track<<','<<motion->displacement<<','<<cmd.v<<','<<cmd.w<<','<<feedback_v<<','<<feedback_w<<','<<mode<<','<<turn_obstacle<<','<<drive_obstacle<<','<<(motion->cfg.avoidance?motion->avoidanceState():"")<<','<<(use_global_route&&motion->cfg.xy_goal?int(global_route->replans):motion->avoidanceReplans())<<','<<motion->avoidanceRemaining()<<','<<csvField(motion->avoidanceReason())<<','<<csvField(motion->fault)<<','<<last_can_tx_errno<<','<<can_tx_retries<<','<<front_gap<<','<<rear_gap<<std::endl;
         if(console) {
           std::ostringstream s; s<<"{\"stage\":\""<<motion->name()<<"\",\"mode\":\""<<(manual?"manual":"auto")<<"\",\"paused\":"<<(operator_pause?"true":"false")<<",\"obstacle\":"<<(obstacle_pause?"true":"false")<<",\"progress\":"<<motion->progress<<",\"v\":"<<cmd.v<<",\"w\":"<<cmd.w<<",\"chassis_mode\":"<<mode<<",\"feedback_v\":"<<feedback_v<<",\"feedback_w\":"<<feedback_w<<",\"reason\":\""<<motion->fault<<"\"}";
@@ -252,7 +267,8 @@ class Experiment {
           }
           status_json+=",\"total_distance\":"+std::to_string(motion->cfg.figure_eight?4*lab26::pi*motion->cfg.radius:motion->cfg.distance);
           const bool ready=pose_time>0&&t-pose_time<0.5&&cloud_time>0&&t-cloud_time<0.5;
-          const bool feedback_fresh=dry||(system_time>0&&t-system_time<0.8&&t-motion_time<0.5);
+          const bool feedback_fresh=dry||(system_time>0&&t-system_time<0.8&&t-motion_time<0.5&&t-rc_time<0.8);
+          status_json+=std::string(",\"control_permitted\":")+(controlPermitted(t)?"true":"false");
           status_json+=std::string(",\"sensors_ready\":")+(ready?"true":"false")+",\"feedback_fresh\":"+(feedback_fresh?"true":"false")+"}";
           status_json.pop_back();const auto blocked=manualBlocked(t);
           status_json+=std::string(",\"manual_ready\":")+(blocked?"false":"true")+",\"manual_block_reason\":\""+(blocked?blocked:"")+"\",\"remote_switch\":"+std::to_string(rc_swb)+",\"chassis_errors\":"+std::to_string(errors)+"}";
@@ -263,6 +279,8 @@ class Experiment {
           status_json.pop_back();status_json+=std::string(",\"dwa_enabled\":")+(use_global_route?"true":"false")+",\"dwa_ready\":"+(global_route->ready()?"true":"false")+"}";
           status_json.pop_back();
           status_json+=",\"maze_protocol\":2,\"maze_height_observations\":true,\"maze_leg\":\""+maze_leg+"\"";
+          status_json+=std::string(",\"gap_roam\":true,\"roaming\":")+(gap_roaming?"true":"false");
+          status_json+=",\"onboard_protocol\":1,\"onboard_id\":\""+onboard_id+"\",\"onboard_experiment\":\""+onboard_experiment+"\"";
           status_json+=std::string(",\"xy_planner\":\"")+(use_global_route?"navfn_pursuit":"local_xy")+"\",\"xy_local_recovery\":false}";
           console->status(status_json);
         }
@@ -283,6 +301,9 @@ class Experiment {
   ros::Publisher obstacle_pub,clearing_pub,maze_obstacle_pub;
   std::string master_id,map_generation;
   std::string maze_leg;
+  std::string onboard_id,onboard_experiment;
+  lab26::GapRoam gap_roam;
+  bool gap_roaming=false;
   double maze_extension=.18;
   void bindRosIO(){
     pose_sub.shutdown();cloud_sub.shutdown();world_cloud_sub.shutdown();
@@ -302,10 +323,13 @@ class Experiment {
   bool console_mode=false, operator_pause=false, manual=false, obstacle_pause=false;
   bool back_obstacle=true,turn_clear=false,drive_clear=false,back_clear=false;
   double last_heartbeat=-1,last_manual=-1,last_tick=0,obstacle_clear_since=-1;
-  double last_console_seen=-1,console_started=now();
   double last_cloud_preview=-1;
   double last_world_cloud=-1,last_pose_preview=-1;
   size_t world_preview_phase=0;
+  using PreviewCell=std::array<int,3>;
+  std::set<PreviewCell> preview_cells;
+  unsigned preview_seq=0;
+  std::string preview_frame,preview_generation;
   lab26::Command manual_cmd;
   lab26::Command previous_cmd;
   int last_can_tx_errno=0;
@@ -379,12 +403,14 @@ class Experiment {
   void manualReply(bool ok,const char* why="") {
     if(console)console->status(std::string("{\"type\":\"ack\",\"command\":\"manual\",\"ok\":")+(ok?"true":"false")+",\"reason\":\""+why+"\"}");
   }
-  void command(const std::string& c,double t) {
+  void command(std::string c,double t) {
+    if(c=="cloudkey"){preview_seq=0;preview_cells.clear();return;}
     if(c=="heartbeat") { last_heartbeat=t; return; }
     if(c=="stop") { motion->stop("Operator stop");manual_cmd={};operator_pause=true;return; }
     if(c=="zero") { manual_cmd={};return; }
     if(c=="pause") { operator_pause=true;manual_cmd={};return; }
     if(t-last_heartbeat>0.4) { if(c=="manual")manualReply(false,"heartbeat_missing");return; }
+    if(!controlPermitted(t)){if(c=="manual")manualReply(false,networkSelected()?"feedback_unavailable":"chassis_mode");return;}
     if(c.rfind("extendmaze ",0)==0){
       std::istringstream input(c);std::string verb,previous,next,frame,generation,extra;
       lab26::ObstaclePoint goal;
@@ -396,10 +422,25 @@ class Experiment {
       motion->cfg.goal_x=goal.x;motion->cfg.goal_y=goal.y;maze_leg=next;
       global_route->extend();return;
     }
+    std::string requested_id;
+    if(c.rfind("onboard ",0)==0){
+      const auto separator=c.find(' ',8);
+      if(separator!=44)return;
+      requested_id=c.substr(8,36);c=c.substr(separator+1);
+      if(requested_id.find_first_not_of("0123456789abcdef-")!=std::string::npos||
+         requested_id==onboard_id||manualBlocked(t)||std::abs(feedback_v)>=.02||std::abs(feedback_w)>=.02)return;
+      if(c!="start"&&c!="start3"&&c.rfind("startxy ",0)!=0&&c.rfind("start8 ",0)!=0&&c.rfind("startroam ",0)!=0)return;
+    }
     const bool maze=c.rfind("startmaze ",0)==0;
-    if(c=="start"||c=="start3"||maze||c.rfind("startxy ",0)==0||c.rfind("start8 ",0)==0) {
+    const bool roam=c.rfind("startroam ",0)==0;
+    if(c=="start"||c=="start3"||roam||maze||c.rfind("startxy ",0)==0||c.rfind("start8 ",0)==0) {
       if(motion->stage!=lab26::Stage::Waiting&&motion->stage!=lab26::Stage::Done&&motion->stage!=lab26::Stage::Fault) return;
-      auto cfg=motion->cfg;cfg.figure_eight=c.rfind("start8 ",0)==0;cfg.avoidance=c=="start3";
+      auto cfg=motion->cfg;cfg.figure_eight=c.rfind("start8 ",0)==0;cfg.avoidance=c=="start3"||roam;
+      if(roam){
+        std::istringstream input(c);std::string verb,extra;double extension;
+        if(!(input>>verb>>extension)||(input>>extra)||!std::isfinite(extension)||extension<.02||extension>.60||manualBlocked(t))return;
+        maze_extension=extension;
+      }
       cfg.xy_goal=maze||c.rfind("startxy ",0)==0;
       std::string leg;
       if(cfg.xy_goal){
@@ -426,7 +467,10 @@ class Experiment {
       }
       run_timeout=cfg.figure_eight?4*lab26::pi*cfg.radius/std::min(cfg.speed,0.8*cfg.max_w*cfg.radius)*2+90:180;
       motion.reset(new lab26::Motion(cfg));
+      onboard_id=requested_id;
+      onboard_experiment=onboard_id.empty()?"":roam?"maze":cfg.xy_goal?"lab3-xy":cfg.figure_eight?"lab2-eight":c=="start3"?"lab3":"lab2";
       maze_leg=leg;
+      gap_roaming=roam;gap_roam=lab26::GapRoam{};
       global_route->reset();path_tracker=lab26::PathTracker();navigation_idle=false;
       manual=false;manual_cmd={};operator_pause=false;obstacle_pause=false;created=t;clear_since=-1;no_response_since=-1;
     } else if(c=="resume") { operator_pause=false;navigation_idle=false; }
@@ -436,6 +480,7 @@ class Experiment {
         auto cfg=motion->cfg;motion.reset(new lab26::Motion(cfg));created=t;
       }
       manual=true;operator_pause=true;manual_cmd={};
+      onboard_id.clear();onboard_experiment.clear();
       manualReply(true);
     }
     else if(c=="auto") { manual=false;operator_pause=true;manual_cmd={}; }
@@ -446,7 +491,12 @@ class Experiment {
   }
   lab26::Stage last_stage=lab26::Stage::Waiting;
   bool dry=true,turn_obstacle=true,drive_obstacle=true; int stable_count=0,ticks=0;
-  int canfd=-1,lockfd=-1,mode=-1,vehicle_state=-1,errors=-1,rc_swb=0;
+  int canfd=-1,lockfd=-1,mode=-1,vehicle_state=-1,errors=-1,rc_swb=-1;
+  double rc_time=-1;
+  bool networkSelected() const {return mode==1&&(rc_swb==0||rc_swb==2);}
+  bool controlPermitted(double t) const {
+    return dry||(networkSelected()&&t-rc_time<.8&&t-system_time<.8&&t-motion_time<.5&&vehicle_state==0&&errors==0);
+  }
   double created=0,pose_time=0,cloud_time=0,system_time=0,motion_time=0,run_timeout=180;
   double feedback_v=0,feedback_w=0; std::ofstream log;
   double no_response_since=-1;
@@ -491,7 +541,7 @@ class Experiment {
     lab26::NearPlaneRays next_rays;
     lab26::ClearingRays clearing;
     size_t finite_points=0;
-    const bool preview=console&&console->connected&&now()-last_world_cloud>2.0&&now()-last_cloud_preview>=0.5;
+    const bool preview=console&&console->canPreview()&&now()-last_world_cloud>2.0&&now()-last_cloud_preview>=1.0;
     std::ostringstream cloud_json;
     if(preview) cloud_json<<std::fixed<<std::setprecision(3)<<"{\"type\":\"cloud\",\"registered\":false,\"frame\":\""<<safeFrame(msg->header.frame_id)<<"\",\"stamp\":"<<std::setprecision(6)<<msg->header.stamp.toSec()<<std::setprecision(3)<<",\"points\":[";
     size_t point_index=0,preview_count=0;
@@ -552,6 +602,7 @@ class Experiment {
       }
       if(finite_points<100)return;
       avoid_points.swap(next_points);
+      next_rays.received_at=now();
       near_plane_rays=next_rays;
       avoid_cloud_pose=pose;ray_pose=pose;latest_raw_start=scan.start;
       front_gap=lab26::bumperClearance(avoid_points,0.);
@@ -581,14 +632,28 @@ class Experiment {
     const double age=(ros::Time::now()-msg->header.stamp).toSec();
     if(age>0.5||age< -0.1||msg->width*msg->height==0)return;
     last_world_cloud=now();
-    if(!console||!console->canPreview()||now()-last_cloud_preview<.065)return;
-    std::ostringstream out;out<<std::fixed<<std::setprecision(6)<<"{\"type\":\"cloud\",\"registered\":true,\"frame\":\""<<safeFrame(msg->header.frame_id)<<"\",\"stamp\":"<<msg->header.stamp.toSec()<<std::setprecision(3)<<",\"points\":[";
-    const size_t stride=std::max<size_t>(1,(size_t(msg->width)*msg->height+1599)/1600);
-    const size_t phase=world_preview_phase++%stride;size_t index=0,count=0;
+    if(!console||!console->canPreview()||now()-last_cloud_preview<1.0)return;
+    const size_t stride=std::max<size_t>(1,(size_t(msg->width)*msg->height+1199)/1200);
+    const size_t phase=(world_preview_phase++/4)%stride;size_t index=0;
+    std::set<PreviewCell> current;
     try {
       sensor_msgs::PointCloud2ConstIterator<float> x(*msg,"x"),y(*msg,"y"),z(*msg,"z");
-      for(;x!=x.end();++x,++y,++z){if(index++%stride!=phase||!std::isfinite(*x)||!std::isfinite(*y)||!std::isfinite(*z))continue;if(count++)out<<',';out<<'['<<*x<<','<<*y<<','<<*z<<']';}
-      out<<"]}";console->status(out.str());last_cloud_preview=now();
+      for(;x!=x.end();++x,++y,++z){
+        if(index++%stride!=phase||!std::isfinite(*x)||!std::isfinite(*y)||!std::isfinite(*z)||
+           std::max({std::abs(*x),std::abs(*y),std::abs(*z)})>10000.)continue;
+        current.insert({int(std::lround(*x*100)),int(std::lround(*y*100)),int(std::lround(*z*100))});
+      }
+      const auto frame=safeFrame(msg->header.frame_id);
+      std::vector<PreviewCell> added,removed;
+      std::set_difference(current.begin(),current.end(),preview_cells.begin(),preview_cells.end(),std::back_inserter(added));
+      std::set_difference(preview_cells.begin(),preview_cells.end(),current.begin(),current.end(),std::back_inserter(removed));
+      const bool full=!preview_seq||preview_frame!=frame||preview_generation!=map_generation||added.size()+removed.size()>current.size();
+      std::ostringstream out;out<<std::fixed<<std::setprecision(6)<<"{\"type\":\"cloud_delta\",\"frame\":\""<<frame<<"\",\"stamp\":"<<msg->header.stamp.toSec()
+        <<",\"base\":"<<(full?0:preview_seq)<<",\"seq\":"<<(preview_seq+1)<<",\"add\":[";
+      auto list=[&](const auto& cells){bool first=true;for(const auto& p:cells){if(!first)out<<',';out<<'['<<p[0]<<','<<p[1]<<','<<p[2]<<']';first=false;}};
+      if(full)list(current);else list(added);
+      out<<"],\"del\":[";if(!full)list(removed);out<<"]}";
+      console->status(out.str());preview_cells.swap(current);++preview_seq;preview_frame=frame;preview_generation=map_generation;last_cloud_preview=now();
     }catch(const std::runtime_error& e){ROS_WARN_THROTTLE(2,"Invalid registered cloud: %s",e.what());}
   }
   void readCan() {
@@ -601,7 +666,7 @@ class Experiment {
       if(f.can_id&CAN_ERR_FLAG){if(f.can_id&CAN_ERR_BUSOFF)motion->stop("CAN bus-off");continue;}
       if(f.can_id==0x211&&f.can_dlc==8) { vehicle_state=f.data[0]; mode=f.data[1]; errors=(uint16_t(f.data[4])<<8)|f.data[5]; system_time=now(); }
       if(f.can_id==0x221&&f.can_dlc==8) { feedback_v=decode(f.data); feedback_w=decode(f.data+2); motion_time=now(); }
-      if(f.can_id==0x241&&f.can_dlc==8) rc_swb=(f.data[0]>>2)&3;
+      if(f.can_id==0x241&&f.can_dlc==8){rc_swb=(f.data[0]>>2)&3;rc_time=now();}
     }
   }
   bool bindCan() {
@@ -616,7 +681,7 @@ class Experiment {
        setsockopt(fd,SOL_CAN_RAW,CAN_RAW_FILTER,filters,sizeof(filters))<0||
        setsockopt(fd,SOL_CAN_RAW,CAN_RAW_ERR_FILTER,&mask,sizeof(mask))<0){close(fd);return false;}
     if(canfd>=0)close(canfd);
-    canfd=fd;can_index=index;system_time=motion_time=-1;last_can_tx_errno=0;return true;
+    canfd=fd;can_index=index;system_time=motion_time=rc_time=-1;mode=rc_swb=-1;last_can_tx_errno=0;return true;
   }
   static std::string csvField(const std::string& value) {
     std::string escaped="\"";for(char c:value){if(c=='\"')escaped+='\"';escaped+=c;}return escaped+'\"';

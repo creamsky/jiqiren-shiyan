@@ -2,7 +2,7 @@
 set -e
 cd "$(dirname "$0")"
 [[ "${1:-}" == lab2 ]] || { echo 'Unsupported experiment'; exit 2; }
-[[ -z "${2:-}" || "$2" == --sensors-only ]] || { echo 'Unsupported prepare option'; exit 2; }
+[[ -z "${2:-}" || "$2" == --sensors-only || "$2" == --roam ]] || { echo 'Unsupported prepare option'; exit 2; }
 sensors_only=false
 if [[ "${2:-}" == --sensors-only ]]; then sensors_only=true; fi
 source ./env.sh
@@ -32,7 +32,7 @@ check_chassis(){
   rc=$(( (16#${switch_frame:0:2} >> 2) & 3 ))
   mode=${system_frame:2:2}
   if [[ ${system_frame:0:2} != 00 || ${system_frame:8:4} != 0000 || ${motion_frame:0:8} != 00000000 ]] ||
-     { ! $sensors_only && [[ ( $mode != 00 && $mode != 01 ) || $rc == 1 || $rc == 3 ]]; }; then
+     [[ $mode != 00 && $mode != 01 && $mode != 03 ]]; then
     echo "CAN initialization refused: mode=$mode RC=$rc fault=${system_frame:8:4} velocity=${motion_frame:0:8}" >&2; exit 1
   fi
 }
@@ -86,11 +86,32 @@ for i in "${!nodes[@]}"; do
   echo "${nodes[$i]} PID ${old_pids[$i]:-none} -> $new"
 done
 check_chassis
-if ! $sensors_only && [[ $mode == 00 ]]; then
+if ! $sensors_only && [[ $mode == 00 && $rc != 1 && $rc != 3 ]]; then
   echo 'Requesting CAN mode at zero speed'
   "${ROBOT_PYTHON:-/usr/bin/python3}" "$LAB26_ROOT/enable_can_mode.py"
 fi
-if [[ -f /home/nvidia/lab3-dwa/start.sh ]]; then bash /home/nvidia/lab3-dwa/start.sh 7>&-;fi
+if [[ ${2:-} != --roam && -f /home/nvidia/lab3-dwa/start.sh ]]; then bash /home/nvidia/lab3-dwa/start.sh 7>&-;fi
 bash ./keep_screen_awake.sh 7>&-
-bash ./display_console.sh --refresh 7>&-
+bash ./display_console.sh 7>&-
+if [[ ${2:-} == --roam ]]; then
+  binary="$LAB26_ROOT/catkin_ws/devel/lib/basic_control/basicControl"
+  pid=$(node_pid /labConsole)
+  if [[ ! "$pid" =~ ^[0-9]+$ ]]; then echo 'Cannot identify maze controller' >&2; exit 1; fi
+  if [[ ! /proc/$pid/exe -ef "$binary" ]]; then
+    systemctl --user is-active --quiet lab26-console.service
+    check_chassis
+    status=$(timeout 4 rostopic echo -n 1 /lab26/status)
+    grep -Eq 'data: .*(DONE|FAULT|WAITING)' <<<"$status" || { echo 'Controller busy; update deferred' >&2; exit 1; }
+    echo 'Loading updated maze controller at standstill'
+    rosnode kill /labConsole
+    deadline=$((SECONDS+45))
+    until (( SECONDS >= deadline )); do
+      pid=$(ss -ltnpH 'sport = :8766' | sed -n 's/.*pid=\([0-9]*\),.*/\1/p')
+      [[ -n "$pid" && /proc/$pid/exe -ef "$binary" ]] && break
+      sleep .25
+    done
+    [[ -n "$pid" && /proc/$pid/exe -ef "$binary" ]] || { echo 'New maze controller not online' >&2; exit 1; }
+    echo "Updated maze controller online (PID $pid)"
+  fi
+fi
 if $sensors_only; then echo 'SENSORS_VERIFIED'; else echo 'EXPERIMENT_2_PREPARED'; fi

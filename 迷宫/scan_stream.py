@@ -1,11 +1,7 @@
-"""Read synchronized, motion-compensated ROS observations. This node has no publishers."""
-import json
-import math
+# Loaded by the console lidar reader after the common mounting functions.
 import threading
-import time
 
 import message_filters
-import rospy
 import tf2_ros
 from sensor_msgs import point_cloud2
 from sensor_msgs.msg import PointCloud2
@@ -20,8 +16,11 @@ def planar_points(message, resolution):
     return list(cells.values())
 
 
-def run():
+def run_maze(period=1.0):
     rospy.init_node("maze_map_reader", anonymous=True)
+    mount, axes = read_lidar_mount()
+    calibrated = mount is not None
+    send_lidar_mount(mount)
     transforms = tf2_ros.Buffer(rospy.Duration(6))
     listener = tf2_ros.TransformListener(transforms)
     topics = {name for name, _ in rospy.get_published_topics("/lab26")}
@@ -30,14 +29,6 @@ def run():
     obstacles = message_filters.Subscriber(obstacle_topic, PointCloud2, queue_size=2, buff_size=2**21)
     rays = message_filters.Subscriber("/lab26/clearing_rays", PointCloud2, queue_size=2)
     sync = message_filters.TimeSynchronizer([obstacles, rays], 5)
-    mount = rospy.get_param("/mapping/extrinsic_T", [])
-    axes = rospy.get_param("/mapping/extrinsic_R", [])
-    calibrated = (not rospy.get_param("/mapping/extrinsic_est_en", True)
-                  and isinstance(mount, list) and len(mount) == 3
-                  and all(isinstance(v, (int, float)) and math.isfinite(v) and abs(v) < 2 for v in mount)
-                  and isinstance(axes, list) and len(axes) == 9
-                  and all(isinstance(v, (int, float)) and math.isfinite(v) for v in axes))
-    print(json.dumps(dict(type="lidar_mount", lidarOffset=mount if calibrated else None)), flush=True)
 
     pending_lock = threading.Lock()
     pending = None
@@ -93,7 +84,7 @@ def run():
     while not rospy.is_shutdown():
         time.sleep(0.02)
         now = time.monotonic()
-        if now - last_sent < 0.18:
+        if now - last_sent < period:
             continue
         with pending_lock:
             pair = pending
@@ -127,7 +118,3 @@ def run():
                 last_status = now
         except BrokenPipeError:
             return
-
-
-if __name__ == "__main__":
-    run()

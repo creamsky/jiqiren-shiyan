@@ -1,0 +1,10 @@
+[Unit]
+Description=SCOUT MINI onboard experiment controller
+[Service]
+Type=simple
+WorkingDirectory=/home/nvidia/lab26
+ExecStart=/bin/bash /home/nvidia/lab26/console_watch.sh
+Restart=always
+RestartSec=4
+[Install]
+WantedBy=default.target
