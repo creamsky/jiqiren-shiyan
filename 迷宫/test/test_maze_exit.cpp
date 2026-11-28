@@ -129,6 +129,7 @@ Maze makeMaze(int seed,std::string style){
 
 bool run(int seed,const std::string& style,bool verbose){
   const Maze maze=makeMaze(seed,style);
+  const bool jitter=style=="turn_jitter";
   GapRoam planner;
   Pose p{maze.scale*1.5,maze.scale*(1.50+.05*(seed%3-1)),(seed%4)*pi/2+.06};
   const double frameYaw=.23*seed,fc=std::cos(frameYaw),fs=std::sin(frameYaw);
@@ -137,6 +138,10 @@ bool run(int seed,const std::string& style,bool verbose){
   Pose atScan{};NearPlaneRays rays;std::vector<ObstaclePoint> hits;
   std::set<Cell> visited;
   Cell last{-1,-1};
+  std::string lastState;
+  int lastDirection=0,reversals=0;
+  double leavePocket=-1.;
+  bool checkedShift=false,checkedTurn=false;
   double hold=0.,maxHold=0.,path=0.;
   const char* outcome="time limit";
   if(verbose)for(const auto& row:maze.grid)std::cout<<row<<"\n";
@@ -147,7 +152,10 @@ bool run(int seed,const std::string& style,bool verbose){
       atScan=p;rays={};rays.received_at=now;hits.clear();
       for(int degree=-180;degree<180;degree+=2){
         const double a=degree*pi/180.,r=maze.ray(p,std::cos(p.yaw+a),std::sin(p.yaw+a));
-        const double x=r*std::cos(a),y=r*std::sin(a);
+        // Alternate the observed range by up to 12 mm; the independent
+        // collision check below still uses the fixed, true wall position.
+        const double measuredRange=r+(jitter&&r<5.?.012*std::sin(.71*degree+tick*.43):0.);
+        const double x=measuredRange*std::cos(a),y=measuredRange*std::sin(a);
         rays.add(x,y,0.);
         if(r<5.)hits.push_back({x,y});
       }
@@ -155,24 +163,54 @@ bool run(int seed,const std::string& style,bool verbose){
     const auto seen=lab3::reframe(hits,{atScan.x,atScan.y,atScan.yaw},{p.x,p.y,p.yaw});
     const double dx=atScan.x-p.x,dy=atScan.y-p.y;
     const Pose odom{8.+fc*p.x-fs*p.y,-3.+fs*p.x+fc*p.y,p.yaw+frameYaw};
-    cmd=planner.step(odom,seen,{&rays,c*dx+s*dy,c*dy-s*dx,atScan.yaw-p.yaw},feedback,cmd,now,dt,.18);
+    Command measured=feedback;
+    if(jitter){
+      measured.v=std::round(feedback.v*1000.)/1000.;
+      measured.w=std::round(feedback.w*100.)/100.+.01*((tick/3)%3-1);
+    }
+    cmd=planner.step(odom,seen,{&rays,c*dx+s*dy,c*dy-s*dx,atScan.yaw-p.yaw},measured,cmd,now,dt,.18);
+    if(jitter&&leavePocket<0.){
+      const std::string state=planner.state;
+      const bool shift=!checkedShift&&(state=="roam_turn_forward"||state=="roam_turn_reverse")&&cmd.v!=0.;
+      const bool turn=!checkedTurn&&state=="roam_turn_setup"&&cmd.w!=0.;
+      if(shift||turn){
+        const RayView view{&rays,c*dx+s*dy,c*dy-s*dx,atScan.yaw-p.yaw};
+        auto blocked=planner,stale=planner;
+        auto changed=seen;changed.push_back({shift&&cmd.v<0.?-.44:.44,.33});
+        const auto stop=blocked.step(odom,changed,view,measured,cmd,now+.01,.01,.18);
+        const auto blind=stale.step(odom,seen,view,measured,cmd,now+.35,dt,.18);
+        if(stop.v!=0.||stop.w!=0.||blind.v!=0.||blind.w!=0.){outcome="unsafe recovery";break;}
+        checkedShift=checkedShift||shift;checkedTurn=checkedTurn||turn;
+      }
+    }
     feedback.v+=.28*(cmd.v-feedback.v);feedback.w+=.28*(cmd.w-feedback.w);
     const double mid=p.yaw+feedback.w*dt*.5;
     p.x+=dt*feedback.v*std::cos(mid);p.y+=dt*feedback.v*std::sin(mid);p.yaw+=dt*feedback.w;
     path+=dt*std::abs(feedback.v);
     hold=(cmd.v==0.&&cmd.w==0.)?hold+dt:0.;maxHold=std::max(maxHold,hold);
     const Cell cell{int(std::floor(p.x/maze.scale)),int(std::floor(p.y/maze.scale))};
+    if(leavePocket<0.){
+      if(std::abs(cmd.v)>.015){
+        const int direction=cmd.v>0.?1:-1;
+        if(lastDirection&&lastDirection!=direction)++reversals;
+        lastDirection=direction;
+      }
+      if(cell!=Cell{1,1})leavePocket=tick*dt;
+      if(jitter&&(reversals>3||tick*dt>20.)){outcome="oscillating in pocket";break;}
+    }
     visited.insert(cell);
-    if(verbose&&(cell!=last||tick%500==0))
+    if(verbose&&(cell!=last||tick%500==0||(jitter&&leavePocket<0.&&lastState!=planner.state)))
       std::cout<<now<<" "<<cell.first<<","<<cell.second<<" pos "<<p.x<<","<<p.y<<" yaw "<<p.yaw<<" "<<planner.state<<"\n";
+    if(verbose)lastState=planner.state;
     last=cell;
     if(maze.collision(p)){outcome="collision";break;}
     if(hold>3.){outcome="immobile";break;}
     if(p.x>maze.scale*maze.grid[0].size()+std::hypot(body_half_length,body_half_width)&&cell.second==maze.exitRow){
-      outcome="exit";break;
+      outcome=jitter&&(!checkedTurn||!checkedShift)?"recovery not exercised":"exit";break;
     }
   }
   std::cout<<"seed "<<seed<<" "<<style<<" "<<outcome<<" path_m "<<path<<" visited "<<visited.size()<<" max_hold_s "<<maxHold
+           <<" first_exit_s "<<leavePocket<<" first_reversals "<<reversals
            <<" pose "<<p.x<<","<<p.y<<","<<p.yaw<<" state "<<planner.state<<"\n";
   return std::string(outcome)=="exit";
 }

@@ -132,6 +132,7 @@ window.MazeView=(()=>{
         roam_pivot_obstacle:'转动范围内有障碍',roam_braking_obstacle:'制动范围内有障碍',
         roam_pivot_unobserved:'等待读取转动范围内的雷达回波',roam_return_blocked:'正在重新选路，当前前后制动空间不足',
         roam_return_forward:'向前腾出回溯空间',roam_return_reverse:'沿后方通路倒车腾位',roam_return_scan:'等候新的全圈雷达数据',
+        roam_turn_setup:'转向腾位所需的角度',roam_turn_forward:'向前移至已确认的转身位置',roam_turn_reverse:'倒向已确认的转身位置',
         roam_return_rescan:'转动空间变化，正在重新选路',
         roam_probe_forward:'沿当前雷达确认的短通路前进',roam_probe_reverse:'沿当前雷达确认的后方通路倒车',
         roam_probe_turn:'调转车头，驶向雷达确认的侧方短通路',
