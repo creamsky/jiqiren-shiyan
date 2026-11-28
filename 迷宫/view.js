@@ -128,7 +128,7 @@ window.MazeView=(()=>{
       const feedback=state.status||{},paused=feedback.paused===true;
       const actions={roam_forward:'沿通道前进',roam_turn:'沿弯道转向',pivot_to_path:'原地转向',
         roam_uturn:'死路掉头',roam_backtrack:'沿来路返回岔口',roam_return_detour:'沿雷达可见通路绕行',route_retreat:'沿已观测通道倒退',
-        roam_slow_for_turn:'减速入弯',roam_explored:'已回到起点，已知支路均已走过',
+        roam_slow_for_turn:'减速入弯',roam_frontier:'沿已观测通道前往待探索支路',roam_explored:'已回到起点，已知支路均已走过',
         roam_pivot_obstacle:'转动范围内有障碍',roam_braking_obstacle:'制动范围内有障碍',
         roam_pivot_unobserved:'等待读取转动范围内的雷达回波',roam_return_blocked:'正在重新选路，当前前后制动空间不足',
         roam_return_forward:'向前腾出回溯空间',roam_return_reverse:'沿后方通路倒车腾位',roam_return_scan:'等候新的全圈雷达数据',

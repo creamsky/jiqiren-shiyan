@@ -6,16 +6,18 @@
 void require(bool ok,const char* msg) { if(!ok) { std::cerr<<"FAIL: "<<msg<<std::endl;std::exit(1); } }
 // Cast one revolution against finite barriers. Only the first surface of
 // each beam is visible, including at the corner and at the corridor exit.
-void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junction=false,int variant=0){
+void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junction=false,int variant=0,bool hiddenBase=false){
   using namespace lab26;
   struct Wall {double x,y,dx,dy;};
   std::vector<Wall> walls={{-3,-.85,6,0},{3,-.85,0,4.45},{-3,.85,4.3,0},
     {1.3,.85,0,2.75},{-3,-.85,0,1.7},{-4,5,9,0},{5,-3,0,8},{-4,-3,9,0},{-4,-3,0,8}};
   GapRoam planner;Pose p{0,.16,0};Command cmd{};NearPlaneRays rays;
   if(pocket){
-    const double halfWidth=wide?.60:.36;
+    // A 180-degree turn with an unseen 18 cm base needs the chassis
+    // diagonal radius plus that margin both ahead and on either side.
+    const double halfWidth=wide&&(!cones&&!hiddenBase)?.66:wide?.60:.36;
     walls={{0,-halfWidth,2,0},{2,-halfWidth,0,2*halfWidth},{0,halfWidth,2,0},{-4,-3,8,0},{4,-3,0,6},{-4,3,8,0},{-4,-3,0,6}};
-    p={cones?1.25:1.45,0,0};
+    p={cones||wide&&!hiddenBase?1.25:1.45,0,0};
   }
   if(junction){
     walls={{-3,-.70,6,0},{3,-.70,0,1.4},{.70,.70,2.3,0},{-3,.70,2.3,0},
@@ -82,8 +84,10 @@ void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junct
     const auto scan=lab3::reframe(hits,{scanPose.x,scanPose.y,scanPose.yaw},{p.x,p.y,p.yaw});
     const double x=scanPose.x-p.x,y=scanPose.y-p.y,c=std::cos(p.yaw),s=std::sin(p.yaw);
     const auto begin=std::chrono::steady_clock::now();
-    // In the cone fixture rays already hit the full square base.
-    cmd=planner.step(p,scan,{&rays,c*x+s*y,-s*x+c*y,scanPose.yaw-p.yaw},measured,cmd,1+tick*.02,.02,cones?0.:.18);
+    // The cone-base and 72 cm wall-aisle fixtures return the actual base
+    // boundary. Upper-only fixtures carry the full unknown base extension.
+    const double baseAllowance=cones||(pocket&&!wide)?0.:.18;
+    cmd=planner.step(p,scan,{&rays,c*x+s*y,-s*x+c*y,scanPose.yaw-p.yaw},measured,cmd,1+tick*.02,.02,baseAllowance);
     if(junction&&reachedEnd&&p.x>1.75&&std::cos(p.yaw)<-.98)completedUTurn=true;
     if(std::string(planner.state)=="roam_backtrack")followedLinks=true;
     // Simulate feedback lag while entering the corner at speed.
@@ -124,7 +128,8 @@ void testLaserMaze(bool pocket=false,bool wide=false,bool cones=false,bool junct
     "Finish dead end turn after a blind interval, return to junction, and take its unexplored arm");
   if(pocket){
     std::cout<<"Pocket reverse distance="<<reversed<<" m, turned="<<turned<<std::endl;
-    if(wide&&(variant&2))require(outside()&&turned&&reversed>0.&&reversed<.60,"An off-centre chassis backs clear of the near cone before turning");
+    if(hiddenBase)require(outside()&&turned&&reversed>0.,"Back out when the upper returns leave insufficient base clearance for a turn");
+    else if(wide&&(variant&2))require(outside()&&turned&&reversed>0.&&reversed<.60,"An off-centre chassis backs clear of the near cone before turning");
     else if(wide)require(outside()&&turned&&reversed==0.&&pivotStops==0,"One uninterrupted U-turn in an observed wide dead end");
     else require(outside()&&reversed>1.&&turned,"Back out of a narrow dead end and turn toward an exit");
   }else require(centered&&outside()&&longestHold<2.,"Recenter, turn into side passage and exit with only visible laser returns");
@@ -295,7 +300,8 @@ void testReturnDetour(){
         const double now=10.+.02*tick;exit.received_at=now;
         cmd=boxed.step(local,aisle,{&exit,0,0,0},cmd,cmd,now,.02,.18);
         local.x+=.02*cmd.v*std::cos(local.yaw);local.y+=.02*cmd.v*std::sin(local.yaw);local.yaw+=.02*cmd.w;
-        rejoined=cmd.v>0.&&std::abs(wrap(local.yaw-pi))<.25&&std::string(boxed.state)=="roam_backtrack";
+        const std::string mode=boxed.state;
+        rejoined=cmd.v>0.&&std::abs(wrap(local.yaw-pi))<.25&&(mode=="roam_backtrack"||mode=="roam_frontier");
       }
       require(rejoined,"Automatically rejoin the observed return aisle after moving forward or backward for clearance");
     }
@@ -433,10 +439,29 @@ void testExplorePastIsolatedHit(){
     require(cmd.v==0.&&side*cmd.w>0.,"During ordinary exploration turn toward the longer short side opening");
   }
 }
+void testEscapeAlongOccupiedFlank(){
+  using namespace lab26;
+  // The cone is alongside the rear half of the chassis. Its entire
+  // possible base lies behind the leading bumper throughout straight travel.
+  GapRoam planner;Command cmd{};Pose p{};
+  for(int tick=0;tick<100&&p.x<.045;tick++){
+    NearPlaneRays rays;const double time=1+tick*.02;rays.received_at=time;
+    for(int deg=-36;deg<=36;deg++)rays.add(.61,.61*std::tan(deg*pi/180.),0.);
+    const std::vector<ObstaclePoint> points={{.66-p.x,0.,true},{-.34-p.x,0.},{-.05-p.x,.385}};
+    auto guard=planner;auto ahead=points;ahead.push_back({.36,.365});
+    const auto blocked=guard.step(p,ahead,{&rays,0,0,0},cmd,cmd,time,.02,.18);
+    require(blocked.v==0.&&blocked.w==0.,"A possible cone base beside the leading corner blocks escape");
+    cmd=planner.step(p,points,{&rays,0,0,0},cmd,cmd,time,.02,.18);
+    require(cmd.v>0.&&cmd.w==0.,"A rear flank inside the inflation band cannot veto straight motion away");
+    p.x+=.02*cmd.v;
+  }
+  require(p.x>=.045,"Advance within the short visible lane instead of repeatedly holding at rest");
+}
 int main(int argc,char** argv){
   if(argc==3){
     const int variant=std::atoi(argv[1]),scene=std::atoi(argv[2]);
     testLaserMaze(scene==1,scene==1,true,scene==2,variant);return 0;
   }
-  testExplorePastIsolatedHit();testConePassingMargin();testShortForwardObservation();testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
+  testEscapeAlongOccupiedFlank();testExplorePastIsolatedHit();testConePassingMargin();testShortForwardObservation();testAngledReturnAisle();testReturnDetour();testLocalScanAndTrail();testLaserMaze();testLaserMaze(true);testLaserMaze(true,true);
+  testLaserMaze(true,true,false,false,0,true);
   testLaserMaze(false,false,true);testLaserMaze(true,true,true);testLaserMaze(false,false,true,true);}
