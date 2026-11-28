@@ -88,8 +88,8 @@ class MazeMap {
       for(const level of p.levels.values())if(level.frame!==this.version&&Math.abs(realHeight-level.z)<=.055){
         level.frame=this.version;level.misses++;
       }
-      const sustained=p.hits>=4&&p.last-p.first>=1.2,needed=sustained?12:6;
-      if(p.miss>=needed&&this.stamp-p.last>=(sustained?2.4:1.2)&&
+      const sustained=p.hits>=4&&p.last-p.first>=1.2,needed=p.hits===1?2:sustained?12:6;
+      if(p.miss>=needed&&this.stamp-p.last>=(p.hits===1?.15:sustained?2.4:1.2)&&
          [...p.levels.values()].every(level=>level.misses>=needed))this.forget(x,y);
     }
   }
@@ -97,8 +97,10 @@ class MazeMap {
     const dx=Math.abs(ex-x),dy=-Math.abs(ey-y),sx=x<ex?1:-1,sy=y<ey?1:-1;
     let err=dx+dy;
     while(true){
-      if(this.value(x,y)===2){if(Math.hypot(ex-x,ey-y)*CELL>.18)this.observeFree(x,y);break;}
-      this.mark(x,y,1);
+      if(this.value(x,y)===2){
+        if(this.evidence.get(key(x,y)).hit===this.version)break;
+        if(Math.hypot(ex-x,ey-y)*CELL>.18)this.observeFree(x,y);
+      }else this.mark(x,y,1);
       if(x===ex&&y===ey)break;
       const twice=2*err;
       if(twice>=dy){err+=dy;x+=sx;}
@@ -109,11 +111,17 @@ class MazeMap {
     if(!scan||typeof scan!=='object')return false;
     const {generation,frame,pose,marks,rays,stamp}=scan;
     if(typeof generation!=='string'||!/^[A-Za-z0-9_-]{1,64}$/.test(generation)||frame!=='camera_init'||!Number.isFinite(stamp)||
-       !Array.isArray(pose)||pose.length!==3||!pose.every(Number.isFinite)||
-       ![marks,rays].every(a=>Array.isArray(a)&&a.length<=15000&&a.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.hypot(...p)<=6.01)))return false;
+       !Array.isArray(pose)||pose.length!==3||!pose.every(Number.isFinite))return false;
     const heights=scan.heightHits||[];
     const rayOrigin=scan.rayOrigin||pose.slice(0,2);
     if(!Array.isArray(rayOrigin)||rayOrigin.length!==2||!rayOrigin.every(Number.isFinite)||distance(rayOrigin,pose)>2)return false;
+    const [px,py,yaw]=pose,c=Math.cos(yaw),s=Math.sin(yaw),ix=index(px),iy=index(py);
+    const fromLidar=scan.raysFromLidar===true;
+    const dx=rayOrigin[0]-px,dy=rayOrigin[1]-py;
+    const rx=fromLidar?c*dx+s*dy:0,ry=fromLidar?-s*dx+c*dy:0;
+    const valid=(points,x,y)=>Array.isArray(points)&&points.length<=15000&&points.every(p=>
+      Array.isArray(p)&&p.length===2&&p.every(Number.isFinite)&&Math.hypot(p[0]-x,p[1]-y)<=6.01);
+    if(!valid(marks,0,0)||!valid(rays,rx,ry))return false;
     if(!Array.isArray(heights)||heights.length>15000||heights.length&&(!Number.isFinite(scan.sensorZ)||
        !heights.every(p=>Array.isArray(p)&&p.length===3&&p.every(Number.isFinite)&&Math.hypot(p[0],p[1])<=6.01)))return false;
     if(this.generation!==generation)this.reset();
@@ -121,7 +129,6 @@ class MazeMap {
     this.generation=generation;this.frame=frame;this.stamp=stamp;this.at=now;this.version++;
     this.coverage=scan.coverage||null;this.retired=0;
     this.pose=pose.slice();this.origin??=pose.slice();
-    const [px,py,yaw]=pose,c=Math.cos(yaw),s=Math.sin(yaw),ix=index(px),iy=index(py);
     const project=([x,y])=>[index(px+c*x-s*y),index(py+s*x+c*y)];
     this.nearReturns=[];
     const displayStride=Math.max(1,Math.ceil(heights.length/768));
@@ -139,7 +146,8 @@ class MazeMap {
       const h=scan.sensorZ+p[2],levels=this.evidence.get(key(x,y)).levels;
       levels.set(Math.floor(h/.08),{z:h,misses:0,frame:this.version});
     }
-    for(const p of rays)this.ray(ix,iy,...project(p));
+    const sx=fromLidar?index(rayOrigin[0]):ix,sy=fromLidar?index(rayOrigin[1]):iy;
+    for(const p of rays)this.ray(sx,sy,...project(p));
     const stride=Math.max(1,Math.ceil(heights.length/320));
     for(let i=this.version%stride;i<heights.length;i+=stride){
       const [x,y,dz]=heights[i];this.heightRay(rayOrigin[0],rayOrigin[1],scan.sensorZ,c*x-s*y,s*x+c*y,dz);

@@ -86,6 +86,27 @@ test('calibrated full scans mark each return at its corrected location only',()=
   assert.notEqual(map.value(10,0),2,'the raw projection must not leave a duplicate obstacle without height evidence');
 });
 
+test('a calibrated ray starts at the mounted lidar and a past return cannot shadow its measured endpoint',()=>{
+  const map=scene(),scan={generation:map.generation,frame:'camera_init',pose:[.05,.05,Math.PI/2],
+    rayOrigin:[.35,.05],raysFromLidar:true,marks:[[.80,-.30]],rays:[[1.8,-.30]]};
+  assert.ok(map.accept({...scan,stamp:2}));
+  assert.equal(map.value(3,8),2);assert.equal(map.value(3,13),0);
+  assert.equal(map.value(3,1),1);assert.equal(map.value(0,1),0);
+  assert.ok(map.accept({...scan,stamp:3,marks:[]}));
+  assert.equal(map.value(3,8),2);assert.equal(map.value(3,13),1);
+  assert.ok(map.accept({...scan,stamp:4,marks:[],rays:[[0,-6.28]]}));
+});
+
+test('two later rays through the recorded height retire a single-frame echo',()=>{
+  const map=scene(),scan={generation:map.generation,frame:'camera_init',pose:map.pose,
+    coverage:'full',lidarOffset:[0,0,0],sensorZ:.5,marks:[],rays:[[2,0]]};
+  map.accept({...scan,stamp:2,heightHits:[[1,0,-.10]]});
+  map.accept({...scan,stamp:2.3,heightHits:[[2,0,-.20]]});
+  assert.equal(map.value(10,0),2);
+  map.accept({...scan,stamp:2.6,heightHits:[[2,0,-.20]]});
+  assert.equal(map.value(10,0),1);assert.ok(map.clearance(10,0)>0);
+});
+
 test('long designated exit uses bounded legs and an occupied shortcut cannot cross a wall',()=>{
   const map=scene();rectangle(map,-8,455,-9,9);targets(map,'exit',44,.05);
   let goal=plan(map);assert.ok(goal);assert.ok(distance(map.pose,goal)<=2.001);

@@ -55,13 +55,15 @@ def run_maze(period=1.0):
                         (2*(q.x*q.y+q.w*q.z), 1-2*(q.x*q.x+q.z*q.z), 2*(q.y*q.z-q.w*q.x)),
                         (2*(q.x*q.z-q.w*q.y), 2*(q.y*q.z+q.w*q.x), 1-2*(q.x*q.x+q.y*q.y)))
             origin = [pos + sum(r*t for r, t in zip(row, mount)) for pos, row in zip(origin, rotation)]
-        if full_scan and calibrated:
-            # Raw beam heights come from Velodyne. Convert the sensor axes to
-            # gravity-aligned world axes, then express XY in the yaw-only grid frame.
+            # Express both hits and clearing rays in level axes. The grid
+            # rotates these axes by yaw exactly once at the scan timestamp.
             world = [[sum(row[k]*axes[3*k+j] for k in range(3)) for j in range(3)] for row in rotation]
             c, s = math.cos(yaw), math.sin(yaw)
             local_x = [c*a+s*b for a, b in zip(world[0], world[1])]
             local_y = [-s*a+c*b for a, b in zip(world[0], world[1])]
+            ox, oy = origin[0]-p.x, origin[1]-p.y
+            bx, by = c*ox+s*oy, -s*ox+c*oy
+        if full_scan and calibrated:
             for x, y, z in point_cloud2.read_points(marks, field_names=("x", "y", "z"), skip_nans=True):
                 if math.hypot(x, y) > 6 or not all(map(math.isfinite, (x, y, z))):
                     continue
@@ -71,8 +73,6 @@ def run_maze(period=1.0):
         if heights:
             # Older map servers project marks from the body origin. Express
             # the calibrated endpoints in that same frame for those readers.
-            ox, oy = origin[0]-p.x, origin[1]-p.y
-            bx, by = c*ox+s*oy, -s*ox+c*oy
             planar = {(x+bx, y+by) for x, y, _ in heights.values() if math.hypot(x+bx, y+by) <= 6.}
             projected_marks = list(planar)
         else:
@@ -82,9 +82,14 @@ def run_maze(period=1.0):
             # Earlier controllers omit rear obstacle marks for Navfn. Rear
             # clearing rays alone cannot establish free space behind the car.
             free = [point for point in free if point[0] >= 0]
+        if calibrated:
+            free = [[round(bx+local_x[0]*x+local_x[1]*y,3), round(by+local_y[0]*x+local_y[1]*y,3)] for x,y in free]
+            if not heights:
+                projected_marks = [[round(bx+local_x[0]*x+local_x[1]*y,3), round(by+local_y[0]*x+local_y[1]*y,3)] for x,y in projected_marks]
+                projected_marks = [p for p in projected_marks if math.hypot(*p)<=6.]
         return dict(generation=generation, frame="camera_init", stamp=marks.header.stamp.to_sec(),
                     coverage="full" if full_scan else "front", sensorZ=origin[2], rayOrigin=origin[:2],
-                    lidarOffset=mount if calibrated else None, heightHits=list(heights.values()),
+                    raysFromLidar=calibrated, lidarOffset=mount if calibrated else None, heightHits=list(heights.values()),
                     pose=[p.x, p.y, yaw], marks=projected_marks, rays=free)
 
     sync.registerCallback(receive)

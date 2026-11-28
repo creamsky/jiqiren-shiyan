@@ -48,6 +48,9 @@ test('opposing keys cancel only their own axis; focus loss clears held input',as
  assert.equal(p.calls.at(-1).body.linear,0);assert.equal(p.calls.at(-1).body.angular,1);
  p.windowListeners.blur();await new Promise(setImmediate);
  assert(p.calls.some(x=>x.body?.command==='zero'));assert.equal(vm.runInContext('held.size',p.context),0);
+ assert.equal(vm.runInContext('manual',p.context),false);
+ assert.equal(vm.runInContext('mine',p.context),true);
+ p.windowListeners.pagehide();
  assert.equal(vm.runInContext('mine',p.context),false);
 });
 test('opening experiment library or editing parameters suspends motion',async()=>{

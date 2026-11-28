@@ -522,7 +522,52 @@ void testEscapeAlongOccupiedFlank(){
   }
   require(p.x>=.045,"Advance within the short visible lane instead of repeatedly holding at rest");
 }
+void testAisleCenter(){
+  using namespace lab26;
+  for(bool single:{false,true})for(int side:{-1,1}){
+    GapRoam planner;Pose p{0.,side*.21,side*.10};Command cmd{};
+    double gateError=1.,closest=4.,drift=0.;int samples=0;
+    for(int tick=0;tick<1150&&p.x<(single?1.65:4.0);++tick){
+      NearPlaneRays rays;std::vector<ObstaclePoint> hits;
+      const double c=std::cos(p.yaw),s=std::sin(p.yaw);
+      for(int deg=-180;deg<180;++deg){
+        const double a=deg*pi/180.,dx=std::cos(p.yaw+a),dy=std::sin(p.yaw+a);
+        double range=4.;
+        for(int k=single?0:-1;k<=(single?0:6);++k)for(int flank:{-1,1}){
+          const double x=1.42+k*.72+(!single&&flank<0?.32:0.)-p.x,y=flank*.69-p.y;
+          const double along=x*dx+y*dy,lateral=x*dy-y*dx;
+          if(along>0.&&std::abs(lateral)<.095)range=std::min(range,along-std::sqrt(.095*.095-lateral*lateral));
+        }
+        double x=range*std::cos(a),y=range*std::sin(a);
+        if(range<4.)hits.push_back({x,y});
+        rays.add(x,y,0.);
+      }
+      const double now=1+tick*.02;rays.received_at=now;
+      cmd=planner.step(p,hits,{&rays,0,0,0},cmd,cmd,now,.02,.18);
+      p.x+=cmd.v*.02*c;p.y+=cmd.v*.02*s;p.yaw+=cmd.w*.02;
+      if(std::abs(p.x-1.42)<closest){closest=std::abs(p.x-1.42);gateError=std::abs(p.y);}
+      if(!single&&p.x>=1.5){drift+=std::abs(p.y);++samples;}
+    }
+    std::cout<<(single?"Gate":"Staggered rows")<<" offset "<<side<<" x="<<p.x<<" gate error="<<gateError<<" mean error="<<drift/std::max(1,samples)<<std::endl;
+    require(p.x>=(single?1.65:4.0)&&gateError<.10&&(single||drift/std::max(1,samples)<.075),"Cross the measured midpoint and follow staggered cone rows");
+  }
+}
+void testRecordedRetreat(){
+  using namespace lab26;
+  RecentTravel trace;
+  for(int i=0;i<=12;++i)trace.observe({-.018*(12-i),-.0007*(12-i)*(12-i),.035*(12-i)});
+  for(int i=0;i<8;++i)trace.encounter({},1+i*.1);
+  NearPlaneRays ring;
+  for(int i=0;i<360;++i)ring.add(2.*std::cos(i*pi/180),2.*std::sin(i*pi/180),0.);
+  const RayView rays{&ring,0,0,0};Command cmd{};
+  auto obstruction=trace,blind=trace;NearPlaneRays empty;
+  require(trace.active&&trace.step({},{{.55,-.35},{-.45,.34}},rays,{},{},.02,cmd)&&cmd.v<0.&&cmd.w>0.,
+          "Reverse the recent curved approach between diagonally opposed posts");
+  require(!obstruction.step({},{{-.34,0.}},rays,{},{},.02,cmd),"A new object in the traveled lane interrupts retracing");
+  require(!blind.step({},{},{&empty,0,0,0},{},{},.02,cmd),"The rear lane must still be observed");
+}
 int main(int argc,char** argv){
+  if(argc==2&&std::string(argv[1])=="--aisle"){testRecordedRetreat();testAisleCenter();return 0;}
   if(argc==2&&std::string(argv[1])=="--interrupted-turn"){
     testLaserMaze(true,true,false,false,0,false,true);return 0;
   }

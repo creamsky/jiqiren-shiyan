@@ -35,4 +35,18 @@ inline bool shiftFits(const std::vector<ObstaclePoint>& points,double shift,doub
   }
   return true;
 }
+
+// Distance from the leading face to the first possible base in a straight
+// sweep. A disk wholly behind that face recedes from the new swept strip.
+inline double translationRoom(const std::vector<ObstaclePoint>& points,int sign,double extension){
+  const double length=body_half_length+body_length_margin,width=body_half_width+body_width_margin;
+  double room=2.;
+  for(const auto& p:points){
+    const double x=sign*p.x-length,y=std::max(0.,std::abs(p.y)-width);
+    if(y>extension||x+extension<0.||x-extension>=room)continue;
+    const double reach=std::sqrt(std::max(0.,extension*extension-y*y));
+    if(x+reach>=0.)room=std::min(room,x-reach);
+  }
+  return std::max(0.,room);
+}
 }

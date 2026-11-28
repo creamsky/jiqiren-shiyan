@@ -3,6 +3,7 @@
 #include "basic_control/rate_limit.h"
 #include "basic_control/frontier_search.h"
 #include "basic_control/turn_sweep.h"
+#include "basic_control/recent_travel.h"
 #include <map>
 
 namespace lab26 {
@@ -159,9 +160,68 @@ class GapRoam {
   std::array<double,36> coverage_{};
   double coverage_stamp_=-1.;
   Pose back_start_{};
+  double back_distance_=.18;
   PassageMemory memory_;
+  RecentTravel recent_;
   double cruise_=.30;
   static double angle(double x){return std::atan2(std::sin(x),std::cos(x));}
+  struct Flank {
+    double slope=0.,offset=0.,first=0.,last=0.;
+    bool valid=false;
+  };
+  struct Surface {double x=0.,y=0.;bool seen=false;};
+  using FlankSamples=std::array<Surface,11>;
+  static double median(std::vector<double>& values){
+    auto mid=values.begin()+values.size()/2;
+    std::nth_element(values.begin(),mid,values.end());
+    return *mid;
+  }
+  // Fit the inner surfaces separately. Cones on opposing rows need not
+  // appear at the same longitudinal position, or even in the same ring.
+  static Flank fitFlank(const FlankSamples& samples){
+    std::vector<double> slopes,offsets;
+    for(const auto& a:samples)if(a.seen)for(const auto& b:samples)
+      if(b.seen&&b.x-a.x>.52)slopes.push_back((b.y-a.y)/(b.x-a.x));
+    if(slopes.empty())return {};
+    Flank f;f.slope=median(slopes);
+    if(std::abs(f.slope)>.50)return {};
+    for(const auto& p:samples)if(p.seen)offsets.push_back(p.y-f.slope*p.x);
+    f.offset=median(offsets);unsigned support=0;
+    for(const auto& p:samples)if(p.seen&&std::abs(p.y-f.offset-f.slope*p.x)<.085){
+      if(!support)f.first=p.x;
+      ++support;
+      f.last=p.x;
+    }
+    f.valid=support>=3&&f.last-f.first>=.65;
+    return f;
+  }
+  static bool aisleTarget(const std::vector<ObstaclePoint>& hits,double& bearing,double& look){
+    FlankSamples left{},right{};
+    for(const auto& p:hits){
+      if(p.remembered||p.x<-.50||p.x>=2.25||std::abs(p.y)<.18||std::abs(p.y)>1.25)continue;
+      auto& sample=(p.y>0.?left:right)[size_t((p.x+.50)*4.)];
+      if(!sample.seen||std::abs(sample.y)>std::abs(p.y))sample={p.x,p.y,true};
+    }
+    const Flank l=fitFlank(left),r=fitFlank(right);
+    const auto fits=[](double width){return width>=2.*(body_half_width+body_width_margin)&&width<=1.85;};
+    if(l.valid&&r.valid&&std::abs(l.slope-r.slope)<.20&&fits(l.offset-r.offset)&&
+       std::min(l.last,r.last)-std::max(l.first,r.first)>.48&&std::min(l.last,r.last)>.55){
+      const double x=std::min(1.1,std::min(l.last,r.last));
+      if(!fits(l.offset-r.offset+(l.slope-r.slope)*x))return false;
+      bearing=std::atan2((l.offset+r.offset+(l.slope+r.slope)*x)*.5,x);
+      look=x;return true;
+    }
+    if(l.valid||r.valid)return false;
+    // A single opposed pair defines a gate, but a forward wall or a
+    // lone reflector does not. Aim through the nearest measured midpoint.
+    double nearest=2.;
+    for(const auto& a:left)if(a.seen)for(const auto& b:right)if(b.seen){
+      const double x=(a.x+b.x)*.5;
+      if(x<.40||x>=nearest||std::abs(a.x-b.x)>.20||!fits(a.y-b.y))continue;
+      nearest=x;bearing=std::atan2((a.y+b.y)*.5,x);look=x;
+    }
+    return nearest<2.;
+  }
   // Fit a small heading correction between the two flanks. In a narrow,
   // symmetric gate neither flank has room for a correction.
   static double passingCorrection(const std::vector<ObstaclePoint>& points,double bearing,double extension){
@@ -278,31 +338,36 @@ class GapRoam {
   }
   // The graph edge is a goal, not a constraint on a local escape maneuver.
   // Evaluate both translations in the current body frame on every tick.
+  // On a long reverse leg keep room to swing the rear corners into the
+  // next passage. The last few centimetres remain available for escape.
+  static bool rearCruiseFits(const std::vector<ObstaclePoint>& points,double extension,double speed){
+    std::vector<ObstaclePoint> leading;
+    for(const auto& p:points)if(-p.x+extension+body_length_margin+.08*speed>=body_half_length)
+      leading.push_back(p);
+    return mazeBrakeClear(leading,{-speed,0.},extension);
+  }
   Command reposition(const std::vector<ObstaclePoint>& points,RayView rays,Command measured,
                      Command previous,double t,double dt,double extension,int preferred,
                      bool allowOpposite=true,double targetSpeed=.12){
     const double stamp=rays.scan->received_at;
     if(stamp<0.||t-stamp>.30||stamp>t+.02)return hold("roam_return_scan");
     if(previous.w!=0.||std::abs(measured.w)>.02)return hold("roam_settle_pivot");
+    const double reaction=.25+dt,b=.20*reaction;
+    const double yawDrift=std::abs(measured.w)*(reaction+std::abs(measured.w)/1.20);
+    const double cornerDrift=std::hypot(body_half_length,body_half_width)*yawDrift;
     for(int sign:{preferred,-preferred}){
       if(sign!=preferred&&!allowOpposite)break;
       if(sign*previous.v<0.||sign*measured.v<-.02)continue;
-      const double bearing=sign==1?0.:pi;
-      const double speed=std::max({targetSpeed,std::abs(measured.v),std::abs(previous.v)});
-      const double travel=.04+speed*(dt+.25)+speed*speed/.40;
-      if(!observedCorridor(points,bearing,travel,rays))continue;
-      // Pure translation adds swept area only at the leading end. A cone
-      // whose *entire possible base* stays behind that end cannot enter
-      // the newly swept strip. With residual yaw or rollback check all
-      // sides. Raw body overlap is checked before and after this test.
-      const double pad=extension+body_length_margin+.08*speed;
-      std::vector<ObstaclePoint> sweep;
-      for(const auto& p:points)
-        if(measured.w!=0.||sign*measured.v<0.||sign*p.x+pad>=body_half_length)
-          sweep.push_back(p);
-      const auto cmd=rateLimit({sign*targetSpeed,0.},previous,dt,.20,.60);
-      if(!mazeBrakeClear(sweep,measured,extension)||!mazeBrakeClear(sweep,{sign*targetSpeed,0.},extension)||
-         !mazeBrakeClear(sweep,cmd,extension)||!brakeClear(points,cmd))continue;
+      const double room=translationRoom(points,sign,extension+cornerDrift);
+      if(backing_&&sign<0&&!rearCruiseFits(points,extension,targetSpeed))continue;
+      const double limit=std::sqrt(b*b+.40*std::max(0.,room-.006))-b;
+      if(limit<std::min(.035,targetSpeed)||std::max(sign*previous.v,sign*measured.v)>limit)continue;
+      if(sign*measured.v<0.&&!shiftFits(points,measured.v*(reaction+std::abs(measured.v)/.40),extension))continue;
+      const double speed=std::min(targetSpeed,limit);
+      const double travel=.04+speed*reaction+speed*speed/.40;
+      if(!observedCorridor(points,sign>0?0.:pi,travel,rays))continue;
+      const auto cmd=rateLimit({sign*speed,0.},previous,dt,.20,.60);
+      if(!brakeClear(points,cmd))continue;
       if(backtracking_)state=sign==1?"roam_return_forward":"roam_return_reverse";
       else state=sign==1?"roam_probe_forward":"roam_probe_reverse";
       return cmd;
@@ -311,6 +376,7 @@ class GapRoam {
   }
   Command escape(Pose pose,const std::vector<ObstaclePoint>& points,RayView rays,Command measured,
                  Command previous,double t,double dt,double extension,int preferred){
+    recent_.encounter(pose,t);
     if(escape_sign_&&std::hypot(pose.x-escape_start_.x,pose.y-escape_start_.y)<.45){
       const auto same=reposition(points,rays,measured,previous,t,dt,extension,escape_sign_,false);
       if(same.v!=0.){escape_blocked_=-1.;return same;}
@@ -475,14 +541,32 @@ class GapRoam {
   Command step(Pose pose,const std::vector<ObstaclePoint>& points,RayView rays,
                Command measured,Command previous,double t,double dt,double coneAllowance){
     state="roam_wait";
+    recent_.observe(pose);
     memory_.observe(pose,false,backtracking_);
     if(!rays.scan)return hold("roam_no_scan");
     if(!(dt>0.&&dt<=.25))return hold("roam_control_interval");
     if(search_.observePose(pose,t)){
       turn_phase_=TurnPhase::idle;escape_sign_=0;
       turning_=chosen_=dead_end_turn_=backing_=detouring_=false;next_scan_=t;
+      // The same pocket can admit alternating partial turns without ever
+      // opening an exit. Move back a junction's width along the arrival
+      // aisle when both the measured trail and the rear scan agree.
+      const double age=t-rays.scan->received_at;
+      if(rays.scan->received_at>=0.&&age>=-.02&&age<=.30&&
+         !seenLane(points,0.,.45,rays)&&memory_.retraced(pose,pose.yaw+pi,.85)>.45&&seenLane(points,pi,.32,rays)&&
+         translationRoom(points,-1,coneAllowance)>.14){
+        backing_=true;back_start_=pose;back_distance_=.55;next_scan_=t+.25;
+      }
     }
     if(!brakeClear(points,measured))return hold("roam_braking_obstacle");
+    if(recent_.active){
+      Command retrace{};
+      if(pivotCoverage(pose,rays,t)&&recent_.step(pose,points,rays,measured,previous,dt,retrace)&&
+         (!backtracking_||return_direction_*retrace.v>=0.)){
+        state="roam_retrace";return retrace;
+      }
+      recent_.active=false;next_scan_=t;
+    }
     // Ignore an isolated interruption and let an actually progressing turn finish.
     if(turn_retry_at_>=0.&&(t-last_turn_retry_>.85||
        std::abs(angle(pose.yaw-turn_retry_pose_.yaw))>.10||
@@ -542,7 +626,8 @@ class GapRoam {
       const bool observed=pivotCoverage(pose,rays,t);
       const bool diskClear=!pivotObstacle(points,coneAllowance+std::hypot(body_length_margin,body_width_margin));
       const bool canTurn=observed&&diskClear;
-      const bool retreating=backing_&&std::hypot(pose.x-back_start_.x,pose.y-back_start_.y)<.18;
+      const bool retreating=backing_&&std::hypot(pose.x-back_start_.x,pose.y-back_start_.y)<back_distance_;
+      if(!backing_)back_distance_=.18;
       // Each contiguous angular opening represents one passage, even when
       // several adjacent sampled headings point into the same corridor.
       std::vector<int> openings;
@@ -604,6 +689,7 @@ class GapRoam {
       return_direction_=routed&&std::abs(alignment)>.85?(alignment>0.?1:-1):0;
       const bool reverseHop=!chosen_&&!backing_&&(backtracking_||guided_)&&routed&&
         std::abs(angle(route-pose.yaw-pi))<.55&&depth[bins/2]>=.50&&
+        (bypassScore<=-1e9||rearCruiseFits(points,coneAllowance,.12))&&
         reposition(points,rays,measured,previous,t,dt,coneAllowance,-1).v<0.;
       const bool bypass=!reverseHop&&!chosen_&&bypassScore>-1e9;
       if(bypass){
@@ -651,6 +737,12 @@ class GapRoam {
         // In an observed open area there is no junction to resolve.
         chosen_=true;heading_=continuing&&std::abs(angle(prior_heading-pose.yaw))<.25?prior_heading:pose.yaw;
       }
+      double aim=0.,look=0.;
+      const bool aisle=!backing_&&!backtracking_&&!shortTurn&&!deadEnd&&fresh&&
+        (!routed||std::abs(angle(route-pose.yaw))<.65)&&
+        aisleTarget(points,aim,look)&&std::abs(aim)<.48&&
+        seenLane(points,aim,std::max(.42,look-body_half_length+.14),rays);
+      if(aisle){heading_=pose.yaw+aim;chosen_=true;}
       const double change=std::abs(angle(heading_-pose.yaw));
       turning_=chosen_&&(change>.60||(depth[0]==0.&&change>.10));
       if(!retreating&&canTurn&&deadEnd&&(!backtracking_||std::abs(angle(route-pose.yaw-pi))<.65)){
@@ -668,10 +760,10 @@ class GapRoam {
         const double bearing=std::abs(centre-pi)>.08&&seenLane(points,centre,.50,rays)?centre:pi;
         heading_=pose.yaw+bearing;chosen_=turning_=dead_end_turn_=true;
       }
-      steering_clear_=false;
+      steering_clear_=aisle;
       if(chosen_&&!turning_){
         const double bearing=angle(heading_-pose.yaw);
-        const double centered=corridorBearing(points,bearing);
+        const double centered=aisle?bearing:corridorBearing(points,bearing);
         if(centered!=bearing&&seenLane(points,centered,.40,rays))
           heading_=pose.yaw+centered;
         const double planned=angle(heading_-pose.yaw);
@@ -696,7 +788,8 @@ class GapRoam {
       if(observed&&fresh&&!chosen_&&!reverseHop&&!clearRetreat&&!backing_&&
          planTurn(pose,points,rays,depth,coneAllowance,routed,route)&&
          followTurn(pose,points,rays,measured,previous,t,dt,coneAllowance,setup))return setup;
-      if(!chosen_&&!backing_&&!backtracking_&&!guided_&&seenLane(points,pi,.20,rays)){
+      if(!chosen_&&!backing_&&!backtracking_&&!guided_&&seenLane(points,pi,.20,rays)&&
+         reposition(points,rays,measured,previous,t,dt,coneAllowance,-1,false).v<0.){
         backing_=true;back_start_=pose;
       }
       // A turn or long lane may be unobservable while the next straight
@@ -715,7 +808,7 @@ class GapRoam {
       if(!seenLane(points,pi,rearLook,rays)){
         backing_=false;next_scan_=t;return hold("roam_rear_blocked");
       }
-      if(std::abs(measured.w)>.04||measured.v>.02)return hold("roam_settle_reverse");
+      if(previous.w!=0.||std::abs(measured.w)>.02||measured.v>.02)return hold("roam_settle_reverse");
       const auto retreat=reposition(points,rays,measured,previous,t,dt,coneAllowance,-1,false);
       if(retreat.v<0.)state="route_retreat";
       else{backing_=false;next_scan_=t;}

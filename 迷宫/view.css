@@ -11,6 +11,7 @@
 #mazeGridLegend { max-width: calc(100vw - 50px); }
 #mazeGridLegend .seen { background: #567a81; }
 #mazeGridLegend .mark { background: #f4a364; }
+#mazeGridLegend .echo { background: #fff1a8; }
 #mazeGridLegend .pad { background: #94694c; }
 #mazeGridLegend .trail { background: #65acb0; }
 #mazeGridLegend .route { background: transparent; border-top: 2px dashed #cb9e4f; }

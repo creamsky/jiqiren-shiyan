@@ -10,7 +10,7 @@ window.MazeView=(()=>{
   el('cloudCanvas').after(panel);
   const gridLegend=document.createElement('span');
   gridLegend.id='mazeGridLegend';gridLegend.hidden=true;
-  gridLegend.innerHTML='<span><i class="dot seen"></i>已观测</span><span><i class="dot mark"></i>障碍</span><span><i class="dot pad"></i>估计底座</span><span><i class="line trail"></i>实走轨迹</span><span><i class="line route"></i>规划路线</span>';
+  gridLegend.innerHTML='<span><i class="dot seen"></i>已观测</span><span><i class="dot mark"></i>累计障碍</span><span><i class="dot echo"></i>本帧回波</span><span><i class="dot pad"></i>估计底座</span><span><i class="line trail"></i>实走轨迹</span><span><i class="line route"></i>规划路线</span>';
   scene.querySelector('.scene-legend').append(gridLegend);
   const canvas=el('mazeCanvas'),ctx=canvas.getContext('2d');
   let data=null,enabled=false,owned=false,prepared=false,view='fit',scale=38,pan=[0,0],drag=null;
@@ -102,6 +102,11 @@ window.MazeView=(()=>{
       points.forEach((p,i)=>{const [x,y]=xy(p);if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);});ctx.stroke();ctx.setLineDash([]);
     }
     line(data.trail,'#9de2df',[]);line(data.route,'#ffe094',[5,4]);
+    if(freshMap()){
+      ctx.fillStyle='#fff1a8';
+      const size=Math.max(2,Math.min(4,.026*scale));
+      for(const p of data.nearReturns||[]){const [x,y]=xy(p);ctx.fillRect(x-size/2,y-size/2,size,size);}
+    }
     function pin(p,label,color,dashed){
       if(!p)return;const [x,y]=xy(p);ctx.strokeStyle=ctx.fillStyle=color;ctx.lineWidth=2;ctx.beginPath();
       ctx.setLineDash(dashed?[4,4]:[]);ctx.arc(x,y,dashed?14:6,0,2*Math.PI);ctx.stroke();ctx.setLineDash([]);
@@ -109,7 +114,10 @@ window.MazeView=(()=>{
     }
     pin(data.origin,'起点','#b6dad9',false);pin(data.hint,'搜索区','#f0cb77',true);pin(data.exit,'出口','#a4f3a8',false);
     const [x,y]=xy(data.pose);ctx.save();ctx.translate(x,y);ctx.rotate(-data.pose[2]);ctx.fillStyle='#f3ffff';
-    ctx.beginPath();ctx.moveTo(10,0);ctx.lineTo(-7,-5);ctx.lineTo(-4,0);ctx.lineTo(-7,5);ctx.closePath();ctx.fill();ctx.restore();
+    ctx.fillStyle='rgba(115,217,222,.32)';ctx.strokeStyle='#e7ffff';ctx.lineWidth=1.5;
+    ctx.fillRect(-.325*scale,-.275*scale,.65*scale,.55*scale);ctx.strokeRect(-.325*scale,-.275*scale,.65*scale,.55*scale);
+    const arrow=Math.max(4,.24*scale);ctx.fillStyle='#f3ffff';
+    ctx.beginPath();ctx.moveTo(arrow,0);ctx.lineTo(-arrow*.45,-arrow*.50);ctx.lineTo(-arrow*.45,arrow*.50);ctx.closePath();ctx.fill();ctx.restore();
     el('gridScale').textContent=Math.max(.1,Math.round(1000/scale)/10)+' m / 100 px';
   }
   new ResizeObserver(draw).observe(canvas);
@@ -133,6 +141,7 @@ window.MazeView=(()=>{
         roam_pivot_unobserved:'等待读取转动范围内的雷达回波',roam_return_blocked:'正在重新选路，当前前后制动空间不足',
         roam_return_forward:'向前腾出回溯空间',roam_return_reverse:'沿后方通路倒车腾位',roam_return_scan:'等候新的全圈雷达数据',
         roam_turn_setup:'转向腾位所需的角度',roam_turn_forward:'向前移至已确认的转身位置',roam_turn_reverse:'倒向已确认的转身位置',
+        roam_retrace:'沿刚驶入的轨迹退回，重新对准通道',
         roam_return_rescan:'转动空间变化，正在重新选路',
         roam_probe_forward:'沿当前雷达确认的短通路前进',roam_probe_reverse:'沿当前雷达确认的后方通路倒车',
         roam_probe_turn:'调转车头，驶向雷达确认的侧方短通路',
